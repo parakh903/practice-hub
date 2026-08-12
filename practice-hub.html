@@ -188,7 +188,9 @@ let state={
   addingChild:false,
   pendingDelete:null, // {type:'question'|'test', id}
   qFormError:'',
-  tfFormError:''
+  tfFormError:'',
+  bulkText:'',
+  bulkMsg:''
 };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -350,6 +352,33 @@ async function saveQuestion(){
   await db.collection('qbank').doc(q.id).set(q);
 }
 
+async function bulkImport(){
+  state.bulkMsg='';
+  let items;
+  try{ items = JSON.parse(state.bulkText); }
+  catch(e){ state.bulkMsg='Could not read that — check it\'s valid JSON (starts with [ and ends with ]).'; render(); return; }
+  if(!Array.isArray(items) || items.length===0){ state.bulkMsg='Expected a list of questions in [ ] brackets.'; render(); return; }
+  let added=0, skipped=0;
+  for(const raw of items){
+    if(!raw || !SUBJECTS.includes(raw.subject) || !raw.prompt || !raw.type){ skipped++; continue; }
+    const q={id:uid(), subject:raw.subject, difficulty:DIFFS.includes(raw.difficulty)?raw.difficulty:'Extension',
+      type:raw.type, topic:raw.topic||'', prompt:raw.prompt, solution:raw.solution||'', createdAt:Date.now()+added};
+    if(raw.type==='mcq'){
+      if(!Array.isArray(raw.options) || raw.options.length<2 || typeof raw.correctIndex!=='number'){ skipped++; continue; }
+      q.options=raw.options; q.correctIndex=raw.correctIndex;
+    } else if(raw.type==='numeric'){
+      if(raw.correctAnswer===undefined || raw.correctAnswer===null || raw.correctAnswer===''){ skipped++; continue; }
+      q.correctAnswer=String(raw.correctAnswer);
+    } else if(raw.type!=='short'){ skipped++; continue; }
+    await db.collection('qbank').doc(q.id).set(q);
+    added++;
+  }
+  state.bulkText='';
+  state.bulkMsg = added>0 ? `Added ${added} question${added===1?'':'s'}${skipped?` (skipped ${skipped} that didn't match the format)`:''}.`
+                          : `Nothing was added — ${skipped} item(s) didn't match the expected format.`;
+  render();
+}
+
 async function deleteQuestion(id){
   if(!(state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===id)){
     state.pendingDelete={type:'question', id};
@@ -435,7 +464,20 @@ function renderManage(){
   kids.appendChild(buildAddChildControl('card'));
   wrap.appendChild(kids);
 
-  wrap.appendChild(el(`<h2 class="section-title">Add a question to the bank</h2>`));
+  wrap.appendChild(el(`<h2 class="section-title">Bulk add questions</h2>`));
+  const bulkCard=el(`<div class="card">
+    <div class="mini" style="margin-bottom:8px;">Paste a block of questions (ask Claude for a batch in this format) and add them all in one go — no need to fill in the form for each one.</div>
+    <textarea id="bulk-text" style="min-height:140px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","difficulty":"Extension","type":"mcq","topic":"Indices","prompt":"...","options":["A","B","C","D"],"correctIndex":0,"solution":"..."}]'>${esc(state.bulkText)}</textarea>
+    <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
+      <button class="btn" id="bulk-import-btn">Import all</button>
+      ${state.bulkMsg?`<span class="mini" style="color:${state.bulkMsg.startsWith('Added')?'var(--good)':'var(--bad)'};">${esc(state.bulkMsg)}</span>`:''}
+    </div>
+  </div>`);
+  bulkCard.querySelector('#bulk-text').addEventListener('input', e=>{ state.bulkText=e.target.value; });
+  bulkCard.querySelector('#bulk-import-btn').addEventListener('click', bulkImport);
+  wrap.appendChild(bulkCard);
+
+  wrap.appendChild(el(`<h2 class="section-title">Add a single question to the bank</h2>`));
   const qf=el(renderQForm());
   wrap.appendChild(qf);
   const typeFieldsContainer=qf.querySelector('#qf-type-fields');
