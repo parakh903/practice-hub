@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Practice Hub</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+:root{
+  --ink:#1E2A38;
+  --ink-soft:#4B5A6B;
+  --paper:#F4F6F5;
+  --paper-card:#FFFFFF;
+  --line:#D7DEDC;
+  --maths:#2F6F6B;
+  --maths-bg:#E7F0EF;
+  --science:#6C4F9C;
+  --science-bg:#EFE9F5;
+  --english:#C77B3D;
+  --english-bg:#FBEEE1;
+  --good:#2F7D4F;
+  --bad:#B5473A;
+  --font-display:'Source Serif 4', Georgia, serif;
+  --font-body:'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono:'IBM Plex Mono', monospace;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  font-family:var(--font-body);
+  color:var(--ink);
+  background:
+    linear-gradient(90deg, rgba(180,195,192,0.35) 1px, transparent 1px) 0 0/28px 28px,
+    linear-gradient(rgba(180,195,192,0.35) 1px, transparent 1px) 0 0/28px 28px,
+    var(--paper);
+  min-height:100vh;
+}
+.wrap{max-width:960px;margin:0 auto;padding:28px 20px 80px;}
+header.top{
+  display:flex;align-items:baseline;justify-content:space-between;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:14px;margin-bottom:22px;flex-wrap:wrap;gap:10px;
+}
+header.top h1{
+  font-family:var(--font-display);font-weight:700;font-size:1.7rem;margin:0;
+  letter-spacing:-0.01em;
+}
+header.top .tagline{font-size:0.8rem;color:var(--ink-soft);font-family:var(--font-mono);}
+nav.tabs{display:flex;gap:6px;margin-bottom:24px;flex-wrap:wrap;}
+nav.tabs button{
+  font-family:var(--font-mono);font-size:0.78rem;letter-spacing:0.04em;text-transform:uppercase;
+  background:transparent;border:1.5px solid var(--ink);color:var(--ink);
+  padding:8px 16px;border-radius:2px;cursor:pointer;transition:all .15s;
+}
+nav.tabs button.active{background:var(--ink);color:var(--paper);}
+nav.tabs button:hover:not(.active){background:rgba(30,42,56,0.08);}
+
+.child-bar{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap;}
+.child-bar .label{font-family:var(--font-mono);font-size:0.72rem;color:var(--ink-soft);text-transform:uppercase;letter-spacing:0.04em;}
+.chip{
+  font-family:var(--font-body);font-weight:500;font-size:0.88rem;
+  border:1.5px solid var(--line);background:var(--paper-card);color:var(--ink);
+  padding:6px 14px;border-radius:20px;cursor:pointer;
+}
+.chip.active{border-color:var(--ink);background:var(--ink);color:var(--paper);}
+.chip.add{border-style:dashed;color:var(--ink-soft);}
+
+.card{
+  background:var(--paper-card);border:1px solid var(--line);border-radius:6px;
+  padding:20px 22px;margin-bottom:16px;position:relative;
+}
+.card.subj-Maths{border-left:5px solid var(--maths);}
+.card.subj-Science{border-left:5px solid var(--science);}
+.card.subj-English{border-left:5px solid var(--english);}
+
+.tag{
+  display:inline-block;font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;
+  letter-spacing:0.05em;padding:2px 8px;border-radius:3px;margin-right:6px;
+}
+.tag.Maths{background:var(--maths-bg);color:var(--maths);}
+.tag.Science{background:var(--science-bg);color:var(--science);}
+.tag.English{background:var(--english-bg);color:var(--english);}
+.tag.diff{background:#EFEDE8;color:var(--ink-soft);}
+
+h2.section-title{
+  font-family:var(--font-display);font-size:1.15rem;margin:28px 0 12px;
+  padding-bottom:6px;border-bottom:1px solid var(--line);
+}
+.empty{
+  border:1.5px dashed var(--line);border-radius:6px;padding:26px;text-align:center;
+  color:var(--ink-soft);font-size:0.9rem;
+}
+.q-prompt{font-size:1rem;line-height:1.55;margin:6px 0 14px;white-space:pre-wrap;}
+.opts{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
+.opt{
+  border:1.5px solid var(--line);border-radius:5px;padding:10px 14px;cursor:pointer;font-size:0.92rem;
+  transition:border-color .12s;
+}
+.opt:hover{border-color:var(--ink-soft);}
+.opt.selected{border-color:var(--ink);background:rgba(30,42,56,0.05);}
+.opt.correct{border-color:var(--good);background:rgba(47,125,79,0.08);}
+.opt.incorrect{border-color:var(--bad);background:rgba(181,71,58,0.08);}
+input[type=text], input[type=number], textarea, select{
+  font-family:var(--font-body);font-size:0.92rem;padding:9px 11px;border:1.5px solid var(--line);
+  border-radius:5px;width:100%;background:#fff;color:var(--ink);
+}
+textarea{min-height:80px;resize:vertical;}
+label.field{display:block;font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;
+  letter-spacing:0.04em;color:var(--ink-soft);margin:12px 0 5px;}
+.btn{
+  font-family:var(--font-mono);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;
+  background:var(--ink);color:var(--paper);border:none;padding:9px 18px;border-radius:3px;cursor:pointer;
+}
+.btn:hover{opacity:0.88;}
+.btn.secondary{background:transparent;color:var(--ink);border:1.5px solid var(--ink);}
+.btn.danger{background:var(--bad);}
+.btn:disabled{opacity:0.4;cursor:not-allowed;}
+.row{display:flex;gap:10px;flex-wrap:wrap;}
+.row > *{flex:1;min-width:140px;}
+.solution-box{
+  background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px 16px;margin-top:10px;
+  font-size:0.9rem;line-height:1.55;
+}
+.solution-box .lbl{font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;
+  color:var(--ink-soft);letter-spacing:0.05em;margin-bottom:6px;}
+.timer{
+  font-family:var(--font-mono);font-size:1.6rem;font-weight:600;position:sticky;top:10px;
+  background:var(--ink);color:var(--paper);padding:8px 18px;border-radius:5px;display:inline-block;
+  margin-bottom:16px;
+}
+.timer.low{background:var(--bad);}
+table{width:100%;border-collapse:collapse;font-size:0.88rem;}
+th{
+  font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.04em;
+  text-align:left;color:var(--ink-soft);border-bottom:1.5px solid var(--ink);padding:8px 10px;
+}
+td{padding:9px 10px;border-bottom:1px solid var(--line);}
+tr.result-row{cursor:pointer;}
+tr.result-row:hover{background:rgba(30,42,56,0.03);}
+.score-pill{
+  font-family:var(--font-mono);font-weight:600;font-size:0.85rem;padding:3px 10px;border-radius:20px;
+}
+.score-pill.high{background:rgba(47,125,79,0.12);color:var(--good);}
+.score-pill.mid{background:rgba(199,123,61,0.15);color:#8a5626;}
+.score-pill.low{background:rgba(181,71,58,0.12);color:var(--bad);}
+.checkbox-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:5px;padding:8px;}
+.checkbox-item{display:flex;align-items:flex-start;gap:8px;padding:7px 6px;border-bottom:1px solid #eee;font-size:0.85rem;}
+.checkbox-item:last-child{border-bottom:none;}
+.detail-panel{background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px 16px;margin-top:8px;}
+.mini{font-size:0.8rem;color:var(--ink-soft);}
+.close-x{position:absolute;top:14px;right:16px;cursor:pointer;color:var(--ink-soft);font-family:var(--font-mono);font-size:0.8rem;}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script>
+const SUBJECTS=['Maths','Science','English'];
+const DIFFS=['Standard','Extension','Challenge'];
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDpwtdP6oVwBou-5ZtLc-BxMns8P2WIzmc",
+  authDomain: "practice-hub-d1d89.firebaseapp.com",
+  projectId: "practice-hub-d1d89",
+  storageBucket: "practice-hub-d1d89.firebasestorage.app",
+  messagingSenderId: "637676988150",
+  appId: "1:637676988150:web:9a742522acbd531b3d6ed7"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const loadedFlags = {children:false, qbank:false, tests:false, results:false};
+function markLoaded(key){
+  loadedFlags[key]=true;
+  if(Object.values(loadedFlags).every(Boolean)) state.loaded=true;
+}
+
+let state={
+  tab:'practice',
+  currentChild:null,
+  children:[],
+  qbank:[],
+  tests:[],
+  results:{}, // childId -> array
+  activeAttempt:null, // {type:'question'|'test', ...runtime}
+  loaded:false,
+  addingChild:false,
+  pendingDelete:null, // {type:'question'|'test', id}
+  qFormError:'',
+  tfFormError:''
+};
+
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+function initListeners(){
+  db.collection('children').onSnapshot(snap=>{
+    state.children = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+    if(!state.currentChild && state.children.length) state.currentChild = state.children[0].id;
+    markLoaded('children');
+    render();
+  }, err=>console.error('children listener error', err));
+
+  db.collection('qbank').onSnapshot(snap=>{
+    state.qbank = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+    markLoaded('qbank');
+    render();
+  }, err=>console.error('qbank listener error', err));
+
+  db.collection('tests').onSnapshot(snap=>{
+    state.tests = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+    markLoaded('tests');
+    render();
+  }, err=>console.error('tests listener error', err));
+
+  db.collection('results').onSnapshot(snap=>{
+    const grouped={};
+    state.children.forEach(c=>{ grouped[c.id]=[]; });
+    snap.docs.forEach(d=>{
+      const r={id:d.id, ...d.data()};
+      if(!grouped[r.childId]) grouped[r.childId]=[];
+      grouped[r.childId].push(r);
+    });
+    state.results = grouped;
+    markLoaded('results');
+    render();
+  }, err=>console.error('results listener error', err));
+}
+
+function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; }
+function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function setTab(t){ state.tab=t; state.activeAttempt=null; render(); }
+
+// ---------- CHILD MANAGEMENT ----------
+function buildAddChildControl(style){
+  if(!state.addingChild){
+    const trigger = el(style==='chip'
+      ? `<div class="chip add">+ add child</div>`
+      : `<button class="btn secondary" style="flex:0 0 auto;">+ Add child</button>`);
+    trigger.addEventListener('click', ()=>{ state.addingChild=true; render(); });
+    return trigger;
+  }
+  const wrap = el(`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+    <input type="text" id="new-child-input" placeholder="Child's name" style="width:160px;">
+    <button class="btn" style="flex:0 0 auto;padding:8px 14px;">Add</button>
+    <button class="btn secondary" style="flex:0 0 auto;padding:8px 14px;">Cancel</button>
+  </div>`);
+  const input=wrap.querySelector('#new-child-input');
+  const [addBtn,cancelBtn]=wrap.querySelectorAll('button');
+  addBtn.addEventListener('click', async ()=>{
+    const name=input.value.trim();
+    if(!name){ input.focus(); input.style.borderColor='var(--bad)'; return; }
+    const id=uid();
+    state.currentChild=id;
+    state.addingChild=false;
+    render();
+    await db.collection('children').doc(id).set({name, createdAt:Date.now()});
+  });
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter') addBtn.click(); });
+  cancelBtn.addEventListener('click', ()=>{ state.addingChild=false; render(); });
+  setTimeout(()=>input.focus(),0);
+  return wrap;
+}
+
+// ---------- QUESTION BANK ----------
+function blankQForm(){
+  return {subject:'Maths', topic:'', difficulty:'Extension', type:'mcq',
+    prompt:'', options:['','','',''], correctIndex:0, correctAnswer:'', solution:''};
+}
+let qForm = blankQForm();
+
+function renderQForm(){
+  return `
+  <div class="card">
+    <label class="field">Subject</label>
+    <div class="row">
+      <select id="qf-subject">${SUBJECTS.map(s=>`<option ${qForm.subject===s?'selected':''}>${s}</option>`).join('')}</select>
+      <select id="qf-difficulty">${DIFFS.map(d=>`<option ${qForm.difficulty===d?'selected':''}>${d}</option>`).join('')}</select>
+      <select id="qf-type">
+        <option value="mcq" ${qForm.type==='mcq'?'selected':''}>Multiple choice</option>
+        <option value="numeric" ${qForm.type==='numeric'?'selected':''}>Numeric answer</option>
+        <option value="short" ${qForm.type==='short'?'selected':''}>Written / extended response</option>
+      </select>
+    </div>
+    <label class="field">Topic (e.g. "Quadratics", "Persuasive writing")</label>
+    <input type="text" id="qf-topic" value="${esc(qForm.topic)}">
+    <label class="field">Question prompt</label>
+    <textarea id="qf-prompt">${esc(qForm.prompt)}</textarea>
+    <div id="qf-type-fields"></div>
+    <label class="field">Full worked solution / marking guide (shown after the child answers)</label>
+    <textarea id="qf-solution">${esc(qForm.solution)}</textarea>
+    <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
+      <button class="btn" id="qf-save">Add question to bank</button>
+      ${state.qFormError?`<span class="mini" style="color:var(--bad);">${esc(state.qFormError)}</span>`:''}
+    </div>
+  </div>`;
+}
+
+function renderQTypeFields(container){
+  container.innerHTML='';
+  if(qForm.type==='mcq'){
+    const wrap=el(`<div></div>`);
+    qForm.options.forEach((opt,i)=>{
+      const row=el(`<div class="row" style="align-items:center;">
+        <input type="text" data-i="${i}" class="qf-opt" placeholder="Option ${String.fromCharCode(65+i)}" value="${esc(opt)}">
+        <label style="flex:0 0 auto;display:flex;align-items:center;gap:5px;font-size:0.82rem;">
+          <input type="radio" name="qf-correct" data-i="${i}" ${qForm.correctIndex===i?'checked':''}> correct
+        </label>
+      </div>`);
+      wrap.appendChild(row);
+    });
+    container.appendChild(wrap);
+    container.querySelectorAll('.qf-opt').forEach(inp=>{
+      inp.addEventListener('input', e=>{ qForm.options[+e.target.dataset.i]=e.target.value; });
+    });
+    container.querySelectorAll('input[name=qf-correct]').forEach(r=>{
+      r.addEventListener('change', e=>{ qForm.correctIndex=+e.target.dataset.i; });
+    });
+  } else if(qForm.type==='numeric'){
+    const row=el(`<div><label class="field">Correct numeric answer</label>
+      <input type="text" id="qf-numeric" value="${esc(qForm.correctAnswer)}" placeholder="e.g. 42 or 3.14"></div>`);
+    container.appendChild(row);
+    row.querySelector('#qf-numeric').addEventListener('input', e=>{ qForm.correctAnswer=e.target.value; });
+  } else {
+    container.appendChild(el(`<div class="mini" style="margin-top:8px;">Written responses are self-marked by the student against your marking guide below — no "correct answer" field needed.</div>`));
+  }
+}
+
+async function saveQuestion(){
+  qForm.subject=document.getElementById('qf-subject').value;
+  qForm.difficulty=document.getElementById('qf-difficulty').value;
+  qForm.type=document.getElementById('qf-type').value;
+  qForm.topic=document.getElementById('qf-topic').value;
+  qForm.prompt=document.getElementById('qf-prompt').value;
+  qForm.solution=document.getElementById('qf-solution').value;
+  state.qFormError='';
+  if(!qForm.prompt.trim()){ state.qFormError='Add a question prompt first.'; render(); return; }
+  const q={id:uid(), subject:qForm.subject, difficulty:qForm.difficulty, type:qForm.type,
+    topic:qForm.topic, prompt:qForm.prompt, solution:qForm.solution, createdAt:Date.now()};
+  if(qForm.type==='mcq'){
+    if(qForm.options.some(o=>!o.trim())){ state.qFormError='Fill in all 4 options.'; render(); return; }
+    q.options=[...qForm.options]; q.correctIndex=qForm.correctIndex;
+  } else if(qForm.type==='numeric'){
+    if(!qForm.correctAnswer.trim()){ state.qFormError='Add the correct numeric answer.'; render(); return; }
+    q.correctAnswer=qForm.correctAnswer.trim();
+  }
+  qForm=blankQForm();
+  render();
+  await db.collection('qbank').doc(q.id).set(q);
+}
+
+async function deleteQuestion(id){
+  if(!(state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===id)){
+    state.pendingDelete={type:'question', id};
+    render();
+    return;
+  }
+  state.pendingDelete=null;
+  render();
+  await db.collection('qbank').doc(id).delete();
+  const affected = state.tests.filter(t=>t.questionIds.includes(id));
+  for(const t of affected){
+    await db.collection('tests').doc(t.id).update({questionIds: t.questionIds.filter(qid=>qid!==id)});
+  }
+}
+
+// ---------- TEST BUILDER ----------
+let testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set()};
+
+function renderTestForm(){
+  const pool=state.qbank.filter(q=>q.subject===testForm.subject);
+  return `
+  <div class="card">
+    <label class="field">Test title</label>
+    <input type="text" id="tf-title" value="${esc(testForm.title)}" placeholder="e.g. Algebra extension paper 1">
+    <div class="row">
+      <div>
+        <label class="field">Subject</label>
+        <select id="tf-subject">${SUBJECTS.map(s=>`<option ${testForm.subject===s?'selected':''}>${s}</option>`).join('')}</select>
+      </div>
+      <div>
+        <label class="field">Time limit (minutes)</label>
+        <input type="number" id="tf-time" value="${testForm.timeLimitMins}" min="5">
+      </div>
+    </div>
+    <label class="field">Select questions from the ${testForm.subject} bank (${pool.length} available)</label>
+    <div class="checkbox-list" id="tf-list">
+      ${pool.length? pool.map(q=>`
+        <div class="checkbox-item">
+          <input type="checkbox" data-id="${q.id}" class="tf-check" ${testForm.questionIds.has(q.id)?'checked':''}>
+          <div><span class="tag diff">${q.difficulty}</span>${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,70))}${q.prompt.length>70?'…':''}</div>
+        </div>`).join('') : '<div class="mini">No questions in this subject yet — add some to the bank first.</div>'}
+    </div>
+    <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
+      <button class="btn" id="tf-save">Create test</button>
+      ${state.tfFormError?`<span class="mini" style="color:var(--bad);">${esc(state.tfFormError)}</span>`:''}
+    </div>
+  </div>`;
+}
+
+async function saveTest(){
+  testForm.title=document.getElementById('tf-title').value.trim();
+  testForm.timeLimitMins=+document.getElementById('tf-time').value || 30;
+  state.tfFormError='';
+  if(!testForm.title){ state.tfFormError='Give the test a title.'; render(); return; }
+  if(testForm.questionIds.size===0){ state.tfFormError='Select at least one question.'; render(); return; }
+  const t={id:uid(), title:testForm.title, subject:testForm.subject,
+    timeLimitMins:testForm.timeLimitMins, questionIds:[...testForm.questionIds], createdAt:Date.now()};
+  testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set()};
+  render();
+  await db.collection('tests').doc(t.id).set(t);
+}
+
+async function deleteTest(id){
+  if(!(state.pendingDelete && state.pendingDelete.type==='test' && state.pendingDelete.id===id)){
+    state.pendingDelete={type:'test', id};
+    render();
+    return;
+  }
+  state.pendingDelete=null;
+  render();
+  await db.collection('tests').doc(id).delete();
+}
+
+// ---------- MANAGE TAB ----------
+function renderManage(){
+  const app=document.getElementById('app');
+  const wrap=el(`<div></div>`);
+  wrap.appendChild(el(`<h2 class="section-title">Children</h2>`));
+  const kids=el(`<div class="row" style="margin-bottom:20px;"></div>`);
+  state.children.forEach(c=>{
+    kids.appendChild(el(`<div class="card" style="flex:0 0 auto;padding:10px 16px;">${esc(c.name)}</div>`));
+  });
+  kids.appendChild(buildAddChildControl('card'));
+  wrap.appendChild(kids);
+
+  wrap.appendChild(el(`<h2 class="section-title">Add a question to the bank</h2>`));
+  const qf=el(renderQForm());
+  wrap.appendChild(qf);
+  const typeFieldsContainer=qf.querySelector('#qf-type-fields');
+  renderQTypeFields(typeFieldsContainer);
+  qf.querySelector('#qf-subject').addEventListener('change', e=>{ qForm.subject=e.target.value; });
+  qf.querySelector('#qf-difficulty').addEventListener('change', e=>{ qForm.difficulty=e.target.value; });
+  qf.querySelector('#qf-type').addEventListener('change', e=>{ qForm.type=e.target.value; renderQTypeFields(typeFieldsContainer); });
+  qf.querySelector('#qf-save').addEventListener('click', saveQuestion);
+
+  wrap.appendChild(el(`<h2 class="section-title">Question bank (${state.qbank.length})</h2>`));
+  if(state.qbank.length===0){
+    wrap.appendChild(el(`<div class="empty">No questions yet. Add your first one above.</div>`));
+  } else {
+    SUBJECTS.forEach(subj=>{
+      const items=state.qbank.filter(q=>q.subject===subj);
+      if(!items.length) return;
+      wrap.appendChild(el(`<div class="mini" style="margin:14px 0 6px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj} — ${items.length}</div>`));
+      items.forEach(q=>{
+        const isPending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
+        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;">
+          <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
+          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span>
+          <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
+        </div>`);
+        card.querySelector('.close-x').addEventListener('click', ()=>deleteQuestion(q.id));
+        wrap.appendChild(card);
+      });
+    });
+  }
+
+  wrap.appendChild(el(`<h2 class="section-title">Build a timed test</h2>`));
+  const tf=el(renderTestForm());
+  wrap.appendChild(tf);
+  tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); render(); });
+  tf.querySelectorAll('.tf-check').forEach(cb=>{
+    cb.addEventListener('change', e=>{
+      const id=e.target.dataset.id;
+      if(e.target.checked) testForm.questionIds.add(id); else testForm.questionIds.delete(id);
+    });
+  });
+  tf.querySelector('#tf-save').addEventListener('click', saveTest);
+
+  wrap.appendChild(el(`<h2 class="section-title">Existing tests (${state.tests.length})</h2>`));
+  if(state.tests.length===0){
+    wrap.appendChild(el(`<div class="empty">No tests built yet.</div>`));
+  } else {
+    state.tests.forEach(t=>{
+      const isPending = state.pendingDelete && state.pendingDelete.type==='test' && state.pendingDelete.id===t.id;
+      const card=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;">
+        <span class="close-x" data-id="${t.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
+        <span class="tag ${t.subject}">${t.subject}</span>
+        <strong>${esc(t.title)}</strong>
+        <div class="mini" style="margin-top:4px;">${t.questionIds.length} questions · ${t.timeLimitMins} min</div>
+      </div>`);
+      card.querySelector('.close-x').addEventListener('click', ()=>deleteTest(t.id));
+      wrap.appendChild(card);
+    });
+  }
+  app.appendChild(wrap);
+}
+
+// ---------- PRACTICE TAB ----------
+function scoreLabel(pct){
+  if(pct>=80) return 'high'; if(pct>=50) return 'mid'; return 'low';
+}
+
+function renderPractice(){
+  const app=document.getElementById('app');
+  if(!state.currentChild){
+    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to start practising.</div>`));
+    return;
+  }
+  if(state.activeAttempt){ renderAttempt(app); return; }
+
+  const adhoc = state.qbank.filter(q=>!state.tests.some(t=>t.questionIds.includes(q.id)) || true);
+  // Show all questions as adhoc-available regardless of test membership.
+  app.appendChild(el(`<h2 class="section-title">Timed tests</h2>`));
+  if(state.tests.length===0){
+    app.appendChild(el(`<div class="empty">No tests available yet.</div>`));
+  } else {
+    state.tests.forEach(t=>{
+      const card=el(`<div class="card subj-${t.subject}">
+        <span class="tag ${t.subject}">${t.subject}</span>
+        <strong style="font-family:var(--font-display);font-size:1.05rem;">${esc(t.title)}</strong>
+        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes</div>
+        <button class="btn">Start test</button>
+      </div>`);
+      card.querySelector('button').addEventListener('click', ()=>startTest(t));
+      app.appendChild(card);
+    });
+  }
+
+  app.appendChild(el(`<h2 class="section-title">Adhoc questions</h2>`));
+  if(state.qbank.length===0){
+    app.appendChild(el(`<div class="empty">No questions in the bank yet.</div>`));
+  } else {
+    state.qbank.slice().reverse().forEach(q=>{
+      const card=el(`<div class="card subj-${q.subject}">
+        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span>
+        <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
+        <button class="btn secondary">Answer this</button>
+      </div>`);
+      card.querySelector('button').addEventListener('click', ()=>startQuestion(q));
+      app.appendChild(card);
+    });
+  }
+}
+
+function startQuestion(q){
+  state.activeAttempt={type:'question', question:q, given:null, selected:null, submitted:false, selfMark:null, startedAt:Date.now()};
+  render();
+}
+function startTest(t){
+  const questions=t.questionIds.map(id=>state.qbank.find(q=>q.id===id)).filter(Boolean);
+  state.activeAttempt={type:'test', test:t, questions, idx:0,
+    answers:questions.map(()=>({given:null,selected:null,selfMark:null})),
+    startedAt:Date.now(), deadline:Date.now()+t.timeLimitMins*60000, submitted:false, timerHandle:null};
+  render();
+}
+
+function renderQuestionBlock(q, answerState, onAnswerChange, revealed){
+  const box=el(`<div></div>`);
+  box.appendChild(el(`<span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span>`));
+  box.appendChild(el(`<div class="q-prompt">${esc(q.prompt)}</div>`));
+
+  if(q.type==='mcq'){
+    const opts=el(`<div class="opts"></div>`);
+    q.options.forEach((opt,i)=>{
+      let cls='opt';
+      if(revealed){
+        if(i===q.correctIndex) cls+=' correct';
+        else if(answerState.selected===i) cls+=' incorrect';
+      } else if(answerState.selected===i) cls+=' selected';
+      const o=el(`<div class="${cls}">${String.fromCharCode(65+i)}. ${esc(opt)}</div>`);
+      if(!revealed) o.addEventListener('click', ()=>{ answerState.selected=i; onAnswerChange(); });
+      opts.appendChild(o);
+    });
+    box.appendChild(opts);
+  } else if(q.type==='numeric'){
+    const inp=el(`<input type="text" placeholder="Your answer" value="${esc(answerState.given||'')}" ${revealed?'disabled':''}>`);
+    inp.addEventListener('input', e=>{ answerState.given=e.target.value; onAnswerChange(); });
+    box.appendChild(inp);
+    if(revealed){
+      const correct = String(answerState.given||'').trim() === String(q.correctAnswer).trim();
+      box.appendChild(el(`<div class="mini" style="margin-top:8px;color:${correct?'var(--good)':'var(--bad)'};font-weight:600;">
+        Correct answer: ${esc(q.correctAnswer)} — you were ${correct?'correct':'incorrect'}</div>`));
+    }
+  } else {
+    const ta=el(`<textarea placeholder="Write your response" ${revealed?'disabled':''}>${esc(answerState.given||'')}</textarea>`);
+    ta.addEventListener('input', e=>{ answerState.given=e.target.value; onAnswerChange(); });
+    box.appendChild(ta);
+    if(revealed){
+      const markRow=el(`<div class="row" style="margin-top:10px;align-items:center;">
+        <div class="mini">How did it compare to the marking guide?</div>
+        <button class="btn secondary" data-v="correct" style="flex:0 0 auto;">Got it right</button>
+        <button class="btn secondary" data-v="partial" style="flex:0 0 auto;">Partly right</button>
+        <button class="btn secondary" data-v="incorrect" style="flex:0 0 auto;">Missed it</button>
+      </div>`);
+      markRow.querySelectorAll('button').forEach(b=>{
+        if(answerState.selfMark===b.dataset.v) b.style.background='var(--ink)', b.style.color='var(--paper)';
+        b.addEventListener('click', ()=>{ answerState.selfMark=b.dataset.v; onAnswerChange(); });
+      });
+      box.appendChild(markRow);
+    }
+  }
+  if(revealed && q.solution){
+    box.appendChild(el(`<div class="solution-box"><div class="lbl">Worked solution</div>${esc(q.solution)}</div>`));
+  }
+  return box;
+}
+
+function renderAttempt(app){
+  const a=state.activeAttempt;
+  if(a.type==='question'){
+    const card=el(`<div class="card subj-${a.question.subject}"></div>`);
+    card.appendChild(renderQuestionBlock(a.question, a, ()=>{}, a.submitted));
+    if(!a.submitted){
+      const submitBtn=el(`<button class="btn" style="margin-top:14px;">Submit answer</button>`);
+      submitBtn.addEventListener('click', ()=>submitQuestion());
+      card.appendChild(submitBtn);
+    } else {
+      const doneBtn=el(`<button class="btn secondary" style="margin-top:14px;">Back to practice</button>`);
+      doneBtn.addEventListener('click', ()=>{ state.activeAttempt=null; render(); });
+      card.appendChild(doneBtn);
+    }
+    app.appendChild(card);
+    return;
+  }
+  // test
+  if(!a.submitted){
+    const remaining=Math.max(0, a.deadline-Date.now());
+    const mins=Math.floor(remaining/60000), secs=Math.floor((remaining%60000)/1000);
+    const timerEl=el(`<div class="timer ${remaining<60000?'low':''}">${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}</div>`);
+    app.appendChild(timerEl);
+    if(remaining<=0){ submitTest(); return; }
+    if(!a._tickBound){
+      a._tickBound=true;
+      a.timerHandle=setInterval(()=>{
+        if(!state.activeAttempt || state.activeAttempt!==a) { clearInterval(a.timerHandle); return; }
+        if(Date.now()>=a.deadline){ clearInterval(a.timerHandle); submitTest(); return; }
+        const r=Math.max(0,a.deadline-Date.now());
+        const m=Math.floor(r/60000), s=Math.floor((r%60000)/1000);
+        const t=document.querySelector('.timer');
+        if(t){ t.textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; t.className='timer'+(r<60000?' low':''); }
+      },1000);
+    }
+    app.appendChild(el(`<div class="mini" style="margin-bottom:10px;">Question ${a.idx+1} of ${a.questions.length}</div>`));
+    const q=a.questions[a.idx];
+    const card=el(`<div class="card subj-${q.subject}"></div>`);
+    card.appendChild(renderQuestionBlock(q, a.answers[a.idx], ()=>{}, false));
+    const nav=el(`<div class="row" style="margin-top:14px;"></div>`);
+    if(a.idx>0){
+      const prev=el(`<button class="btn secondary" style="flex:0 0 auto;">Previous</button>`);
+      prev.addEventListener('click', ()=>{ a.idx--; render(); });
+      nav.appendChild(prev);
+    }
+    if(a.idx<a.questions.length-1){
+      const next=el(`<button class="btn" style="flex:0 0 auto;">Next</button>`);
+      next.addEventListener('click', ()=>{ a.idx++; render(); });
+      nav.appendChild(next);
+    } else {
+      const fin=el(`<button class="btn" style="flex:0 0 auto;">Finish test</button>`);
+      fin.addEventListener('click', ()=>submitTest());
+      nav.appendChild(fin);
+    }
+    card.appendChild(nav);
+    app.appendChild(card);
+  } else {
+    app.appendChild(el(`<h2 class="section-title">${esc(a.test.title)} — results</h2>`));
+    app.appendChild(el(`<div class="mini" style="margin-bottom:14px;">Score: ${a.autoScore}/${a.autoMax} auto-marked${a.hasWritten?' (plus written responses — self-mark below)':''}</div>`));
+    a.questions.forEach((q,i)=>{
+      const card=el(`<div class="card subj-${q.subject}"></div>`);
+      card.appendChild(renderQuestionBlock(q, a.answers[i], ()=>{}, true));
+      app.appendChild(card);
+    });
+    const doneBtn=el(`<button class="btn secondary" style="margin-top:6px;">Back to practice</button>`);
+    doneBtn.addEventListener('click', async ()=>{
+      await finalizeTestSelfMarks();
+      state.activeAttempt=null; render();
+    });
+    app.appendChild(doneBtn);
+  }
+}
+
+async function submitQuestion(){
+  const a=state.activeAttempt;
+  a.submitted=true;
+  const q=a.question;
+  let correct=null;
+  if(q.type==='mcq') correct = a.selected===q.correctIndex;
+  else if(q.type==='numeric') correct = String(a.given||'').trim()===String(q.correctAnswer).trim();
+  const resultId=uid();
+  const detailEntry={qId:q.id, prompt:q.prompt, given: q.type==='mcq'? (q.options[a.selected]??'(no answer)') : a.given, correct};
+  const result={id:resultId, childId:state.currentChild, type:'question', refId:q.id, subject:q.subject, topic:q.topic,
+    date:Date.now(), autoCorrect:correct, selfMark:null, detail:[detailEntry]};
+  render();
+  await db.collection('results').doc(resultId).set(result);
+  // hook to capture selfMark for written type after user picks it
+  const observer=setInterval(async ()=>{
+    if(!state.activeAttempt || state.activeAttempt.type!=='question'){ clearInterval(observer); return; }
+    if(state.activeAttempt.selfMark){
+      const mark=state.activeAttempt.selfMark;
+      clearInterval(observer);
+      await db.collection('results').doc(resultId).update({
+        selfMark:mark,
+        detail:[{...detailEntry, selfMark:mark}]
+      });
+    }
+  },800);
+}
+
+async function submitTest(){
+  const a=state.activeAttempt;
+  if(a.submitted) return;
+  a.submitted=true;
+  let autoScore=0, autoMax=0, hasWritten=false;
+  a.questions.forEach((q,i)=>{
+    if(q.type==='mcq'){ autoMax++; if(a.answers[i].selected===q.correctIndex) autoScore++; }
+    else if(q.type==='numeric'){ autoMax++; if(String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim()) autoScore++; }
+    else hasWritten=true;
+  });
+  a.autoScore=autoScore; a.autoMax=autoMax; a.hasWritten=hasWritten;
+  render();
+}
+
+async function finalizeTestSelfMarks(){
+  const a=state.activeAttempt;
+  if(!a || a.type!=='test') return;
+  const detail=a.questions.map((q,i)=>{
+    let correct=null;
+    if(q.type==='mcq') correct=a.answers[i].selected===q.correctIndex;
+    else if(q.type==='numeric') correct=String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim();
+    return {qId:q.id, prompt:q.prompt, subject:q.subject,
+      given: q.type==='mcq'? (q.options[a.answers[i].selected]??'(no answer)') : a.answers[i].given,
+      correct, selfMark:a.answers[i].selfMark||null};
+  });
+  const writtenSelfCorrect=detail.filter(d=>d.selfMark==='correct').length;
+  const writtenPartial=detail.filter(d=>d.selfMark==='partial').length;
+  const totalMarked=a.autoMax + a.questions.filter(q=>q.type==='short').length;
+  const totalScore=a.autoScore + writtenSelfCorrect + writtenPartial*0.5;
+  const resultId=uid();
+  const result={id:resultId, childId:state.currentChild, type:'test', refId:a.test.id, title:a.test.title, subject:a.test.subject,
+    date:Date.now(), score:totalScore, maxScore:totalMarked,
+    timeTakenSecs:Math.round((Date.now()-a.startedAt)/1000), detail};
+  await db.collection('results').doc(resultId).set(result);
+}
+
+// ---------- RESULTS TAB ----------
+let expandedResult=null;
+function renderResults(){
+  const app=document.getElementById('app');
+  if(!state.currentChild){
+    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to see results.</div>`));
+    return;
+  }
+  const list=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
+  app.appendChild(el(`<h2 class="section-title">Results for ${esc(state.children.find(c=>c.id===state.currentChild)?.name||'')}</h2>`));
+  if(list.length===0){
+    app.appendChild(el(`<div class="empty">No attempts yet.</div>`));
+    return;
+  }
+  const table=el(`<table>
+    <thead><tr><th>Date</th><th>Type</th><th>Subject</th><th>Item</th><th>Score</th></tr></thead>
+    <tbody></tbody></table>`);
+  const tbody=table.querySelector('tbody');
+  list.forEach(r=>{
+    let scoreText, pct;
+    if(r.type==='question'){
+      if(r.autoCorrect!==null){ scoreText = r.autoCorrect? '1/1':'0/1'; pct = r.autoCorrect?100:0; }
+      else { scoreText = r.selfMark? {correct:'✓',partial:'~',incorrect:'✗'}[r.selfMark] : 'pending'; pct = r.selfMark==='correct'?100:r.selfMark==='partial'?50:0; }
+    } else {
+      scoreText = `${r.score}/${r.maxScore}`; pct = r.maxScore? (r.score/r.maxScore*100):0;
+    }
+    const row=el(`<tr class="result-row">
+      <td class="mini">${new Date(r.date).toLocaleDateString()}</td>
+      <td>${r.type==='test'?'Test':'Question'}</td>
+      <td><span class="tag ${r.subject}">${r.subject}</span></td>
+      <td>${esc(r.title||r.topic||'—')}</td>
+      <td><span class="score-pill ${scoreLabel(pct)}">${scoreText}</span></td>
+    </tr>`);
+    row.addEventListener('click', ()=>{ expandedResult = expandedResult===r.id? null : r.id; renderResultsBody(); });
+    tbody.appendChild(row);
+    if(expandedResult===r.id){
+      const detailRow=el(`<tr><td colspan="5"><div class="detail-panel"></div></td></tr>`);
+      const panel=detailRow.querySelector('.detail-panel');
+      r.detail.forEach(d=>{
+        panel.appendChild(el(`<div style="margin-bottom:10px;">
+          <div style="font-size:0.85rem;"><strong>${esc((d.prompt||'').slice(0,90))}${(d.prompt||'').length>90?'…':''}</strong></div>
+          <div class="mini">Answer given: ${esc(String(d.given??'—'))} ${d.correct!==null&&d.correct!==undefined? (d.correct?' · correct':' · incorrect') : (d.selfMark? ' · '+d.selfMark : '')}</div>
+        </div>`));
+      });
+      tbody.appendChild(detailRow);
+    }
+  });
+  app.appendChild(table);
+}
+function renderResultsBody(){ render(); }
+
+// ---------- ROOT RENDER ----------
+function render(){
+  const app=document.getElementById('app');
+  app.innerHTML='';
+  if(!state.loaded){
+    app.appendChild(el(`<div class="empty">Loading…</div>`));
+    return;
+  }
+  app.appendChild(el(`
+    <header class="top">
+      <h1>Practice Hub</h1>
+      <div class="tagline">extension practice · year 8 → hsc</div>
+    </header>`));
+
+  const nav=el(`<nav class="tabs"></nav>`);
+  [['practice','Practice'],['results','Results'],['manage','Manage']].forEach(([id,label])=>{
+    const b=el(`<button class="${state.tab===id?'active':''}">${label}</button>`);
+    b.addEventListener('click', ()=>setTab(id));
+    nav.appendChild(b);
+  });
+  app.appendChild(nav);
+
+  if(state.tab!=='manage'){
+    const bar=el(`<div class="child-bar"><span class="label">Student</span></div>`);
+    state.children.forEach(c=>{
+      const chip=el(`<div class="chip ${state.currentChild===c.id?'active':''}">${esc(c.name)}</div>`);
+      chip.addEventListener('click', ()=>{ state.currentChild=c.id; state.activeAttempt=null; render(); });
+      bar.appendChild(chip);
+    });
+    bar.appendChild(buildAddChildControl('chip'));
+    app.appendChild(bar);
+  }
+
+  if(state.tab==='practice') renderPractice();
+  else if(state.tab==='results') renderResults();
+  else if(state.tab==='manage') renderManage();
+}
+
+initListeners();
+</script>
+</body>
+</html>
