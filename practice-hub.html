@@ -195,10 +195,28 @@ let state={
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
+function getRememberedChild(){
+  try{ return localStorage.getItem('ph_current_child'); } catch(e){ return null; }
+}
+function setRememberedChild(id){
+  try{ localStorage.setItem('ph_current_child', id); } catch(e){}
+}
+
 function initListeners(){
   db.collection('children').onSnapshot(snap=>{
     state.children = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
-    if(!state.currentChild && state.children.length) state.currentChild = state.children[0].id;
+    if(!state.currentChild){
+      const remembered = getRememberedChild();
+      if(remembered && state.children.some(c=>c.id===remembered)){
+        state.currentChild = remembered;
+      } else if(state.children.length===1){
+        // only one child exists at all — safe to auto-select, nothing to confuse it with
+        state.currentChild = state.children[0].id;
+        setRememberedChild(state.children[0].id);
+      }
+      // otherwise: leave unselected on purpose, so this device is forced to explicitly
+      // pick a name once, rather than silently defaulting to the wrong child
+    }
     markLoaded('children');
     render();
   }, err=>console.error('children listener error', err));
@@ -255,6 +273,7 @@ function buildAddChildControl(style){
     if(!name){ input.focus(); input.style.borderColor='var(--bad)'; return; }
     const id=uid();
     state.currentChild=id;
+    setRememberedChild(id);
     state.addingChild=false;
     render();
     await db.collection('children').doc(id).set({name, createdAt:Date.now()});
@@ -519,15 +538,24 @@ function renderManage(){
   if(state.qbank.length===0){
     wrap.appendChild(el(`<div class="empty">No questions yet. Add your first one above.</div>`));
   } else {
+    function doneByAllChildren(qId){
+      if(state.children.length===0) return false;
+      return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type==='question' && r.refId===qId));
+    }
     SUBJECTS.forEach(subj=>{
-      const items=state.qbank.filter(q=>q.subject===subj);
+      const items=state.qbank.filter(q=>q.subject===subj).sort((a,b)=>{
+        const da=doneByAllChildren(a.id), db_=doneByAllChildren(b.id);
+        if(da!==db_) return da? 1 : -1; // done-by-everyone sinks to bottom
+        return (b.createdAt||0)-(a.createdAt||0);
+      });
       if(!items.length) return;
       wrap.appendChild(el(`<div class="mini" style="margin:14px 0 6px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj} — ${items.length}</div>`));
       items.forEach(q=>{
         const isPending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
-        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;">
+        const allDone = doneByAllChildren(q.id);
+        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;${allDone?'opacity:0.6;':''}">
           <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
-          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span>
+          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}
           <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
         </div>`);
         card.querySelector('.close-x').addEventListener('click', ()=>deleteQuestion(q.id));
@@ -578,23 +606,37 @@ function scoreLabel(pct){
 function renderPractice(){
   const app=document.getElementById('app');
   if(!state.currentChild){
-    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to start practising.</div>`));
+    const msg = state.children.length===0
+      ? 'Add a child in the Manage tab to start practising.'
+      : 'Tap your name above to continue — this makes sure your answers and results are saved under the right name.';
+    app.appendChild(el(`<div class="empty">${esc(msg)}</div>`));
     return;
   }
   if(state.activeAttempt){ renderAttempt(app); return; }
 
-  const adhoc = state.qbank.filter(q=>!state.tests.some(t=>t.questionIds.includes(q.id)) || true);
-  // Show all questions as adhoc-available regardless of test membership.
+  const myResults = state.results[state.currentChild] || [];
+  function lastAttemptFor(type, refId){
+    const matches = myResults.filter(r=>r.type===type && r.refId===refId).sort((a,b)=>b.date-a.date);
+    return matches[0] || null;
+  }
+
   app.appendChild(el(`<h2 class="section-title">Timed tests</h2>`));
   if(state.tests.length===0){
     app.appendChild(el(`<div class="empty">No tests available yet.</div>`));
   } else {
-    state.tests.forEach(t=>{
-      const card=el(`<div class="card subj-${t.subject}">
+    const sortedTests = state.tests.slice().sort((a,b)=>{
+      const da=lastAttemptFor('test', a.id), db_=lastAttemptFor('test', b.id);
+      if(!!da!==!!db_) return da? 1 : -1; // done ones sink to bottom
+      return (b.createdAt||0)-(a.createdAt||0);
+    });
+    sortedTests.forEach(t=>{
+      const done = lastAttemptFor('test', t.id);
+      const card=el(`<div class="card subj-${t.subject}" style="position:relative;${done?'opacity:0.75;':''}">
+        ${done?`<span class="score-pill ${scoreLabel(done.maxScore? done.score/done.maxScore*100:0)}" style="position:absolute;top:16px;right:16px;">Done · ${done.score}/${done.maxScore}</span>`:''}
         <span class="tag ${t.subject}">${t.subject}</span>
         <strong style="font-family:var(--font-display);font-size:1.05rem;">${esc(t.title)}</strong>
-        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks</div>
-        <button class="btn">Start test</button>
+        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks${done?` · took ${Math.round(done.timeTakenSecs/60)} min`:''}</div>
+        <button class="btn">${done?'Retake test':'Start test'}</button>
       </div>`);
       card.querySelector('button').addEventListener('click', ()=>startTest(t));
       app.appendChild(card);
@@ -605,11 +647,29 @@ function renderPractice(){
   if(state.qbank.length===0){
     app.appendChild(el(`<div class="empty">No questions in the bank yet.</div>`));
   } else {
-    state.qbank.slice().reverse().forEach(q=>{
-      const card=el(`<div class="card subj-${q.subject}">
-        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk</span>
+    const sortedQ = state.qbank.slice().sort((a,b)=>{
+      const da=lastAttemptFor('question', a.id), db_=lastAttemptFor('question', b.id);
+      if(!!da!==!!db_) return da? 1 : -1; // done ones sink to bottom
+      return (b.createdAt||0)-(a.createdAt||0);
+    });
+    sortedQ.forEach(q=>{
+      const done = lastAttemptFor('question', q.id);
+      let doneBadge='', timeNote='';
+      if(done){
+        const m=done.marks||1;
+        const earned = done.autoCorrect!==null ? (done.autoCorrect?m:0) : (done.earned??null);
+        const label = earned===null ? 'Answered · pending self-mark' : `Answered · ${earned}/${m}`;
+        doneBadge=`<span class="score-pill ${earned===null?'mid':scoreLabel(m?earned/m*100:0)}" style="position:absolute;top:16px;right:16px;">${label}</span>`;
+        if(done.timeTakenSecs){
+          const took=Math.round(done.timeTakenSecs/60), exp=done.expectedMinutes||q.timeMinutes||2;
+          timeNote = ` · took ${took<1?'<1':took} min (expected ~${exp})`;
+        }
+      }
+      const card=el(`<div class="card subj-${q.subject}" style="position:relative;${done?'opacity:0.75;':''}">
+        ${doneBadge}
+        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk${timeNote}</span>
         <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
-        <button class="btn secondary">Answer this</button>
+        <button class="btn secondary">${done?'Answer again':'Answer this'}</button>
       </div>`);
       card.querySelector('button').addEventListener('click', ()=>startQuestion(q));
       app.appendChild(card);
@@ -770,8 +830,10 @@ async function submitQuestion(){
   else if(q.type==='numeric'){ correct = String(a.given||'').trim()===String(q.correctAnswer).trim(); earned = correct?marks:0; }
   const resultId=uid();
   const detailEntry={qId:q.id, prompt:q.prompt, given: q.type==='mcq'? (q.options[a.selected]??'(no answer)') : a.given, correct};
+  const timeTakenSecs = Math.round((Date.now()-a.startedAt)/1000);
   const result={id:resultId, childId:state.currentChild, type:'question', refId:q.id, subject:q.subject, topic:q.topic,
-    date:Date.now(), autoCorrect:correct, selfMark:null, marks, earned, detail:[detailEntry]};
+    date:Date.now(), autoCorrect:correct, selfMark:null, marks, earned, detail:[detailEntry],
+    timeTakenSecs, expectedMinutes:q.timeMinutes||2};
   render();
   await db.collection('results').doc(resultId).set(result);
   // hook to capture selfMark for written type after user picks it
@@ -823,9 +885,10 @@ async function finalizeTestSelfMarks(){
   const totalMarked=a.autoMax + writtenMaxMarks;
   const totalScore=a.autoScore + writtenMarksEarned;
   const resultId=uid();
+  const expectedMinutes = Math.round(a.questions.reduce((s,q)=>s+(q.timeMinutes||2),0));
   const result={id:resultId, childId:state.currentChild, type:'test', refId:a.test.id, title:a.test.title, subject:a.test.subject,
     date:Date.now(), score:totalScore, maxScore:totalMarked,
-    timeTakenSecs:Math.round((Date.now()-a.startedAt)/1000), detail};
+    timeTakenSecs:Math.round((Date.now()-a.startedAt)/1000), expectedMinutes, detail};
   await db.collection('results').doc(resultId).set(result);
 }
 
@@ -834,7 +897,10 @@ let expandedResult=null;
 function renderResults(){
   const app=document.getElementById('app');
   if(!state.currentChild){
-    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to see results.</div>`));
+    const msg = state.children.length===0
+      ? 'Add a child in the Manage tab to see results.'
+      : 'Tap a name above to see that child\'s results.';
+    app.appendChild(el(`<div class="empty">${esc(msg)}</div>`));
     return;
   }
   const list=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
@@ -844,7 +910,7 @@ function renderResults(){
     return;
   }
   const table=el(`<table>
-    <thead><tr><th>Date</th><th>Type</th><th>Subject</th><th>Item</th><th>Score</th></tr></thead>
+    <thead><tr><th>Date</th><th>Type</th><th>Subject</th><th>Item</th><th>Time</th><th>Score</th></tr></thead>
     <tbody></tbody></table>`);
   const tbody=table.querySelector('tbody');
   list.forEach(r=>{
@@ -857,17 +923,27 @@ function renderResults(){
     } else {
       scoreText = `${r.score}/${r.maxScore}`; pct = r.maxScore? (r.score/r.maxScore*100):0;
     }
+    let timeText='—', timeColor='var(--ink-soft)';
+    if(r.timeTakenSecs!=null && r.expectedMinutes){
+      const tookMin = r.timeTakenSecs/60;
+      const ratio = tookMin/r.expectedMinutes;
+      const tookLabel = tookMin<1 ? '<1m' : `${Math.round(tookMin)}m`;
+      timeText = `${tookLabel} / ~${r.expectedMinutes}m`;
+      if(ratio>=1.5) timeColor='var(--bad)';
+      else if(ratio<=0.6) timeColor='var(--maths)';
+    }
     const row=el(`<tr class="result-row">
       <td class="mini">${new Date(r.date).toLocaleDateString()}</td>
       <td>${r.type==='test'?'Test':'Question'}</td>
       <td><span class="tag ${r.subject}">${r.subject}</span></td>
       <td>${esc(r.title||r.topic||'—')}</td>
+      <td class="mini" style="color:${timeColor};font-family:var(--font-mono);">${timeText}</td>
       <td><span class="score-pill ${scoreLabel(pct)}">${scoreText}</span></td>
     </tr>`);
     row.addEventListener('click', ()=>{ expandedResult = expandedResult===r.id? null : r.id; renderResultsBody(); });
     tbody.appendChild(row);
     if(expandedResult===r.id){
-      const detailRow=el(`<tr><td colspan="5"><div class="detail-panel"></div></td></tr>`);
+      const detailRow=el(`<tr><td colspan="6"><div class="detail-panel"></div></td></tr>`);
       const panel=detailRow.querySelector('.detail-panel');
       r.detail.forEach(d=>{
         panel.appendChild(el(`<div style="margin-bottom:10px;">
@@ -908,7 +984,7 @@ function render(){
     const bar=el(`<div class="child-bar"><span class="label">Student</span></div>`);
     state.children.forEach(c=>{
       const chip=el(`<div class="chip ${state.currentChild===c.id?'active':''}">${esc(c.name)}</div>`);
-      chip.addEventListener('click', ()=>{ state.currentChild=c.id; state.activeAttempt=null; render(); });
+      chip.addEventListener('click', ()=>{ state.currentChild=c.id; setRememberedChild(c.id); state.activeAttempt=null; render(); });
       bar.appendChild(chip);
     });
     bar.appendChild(buildAddChildControl('chip'));
