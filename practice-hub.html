@@ -363,6 +363,8 @@ async function bulkImport(){
     if(!raw || !SUBJECTS.includes(raw.subject) || !raw.prompt || !raw.type){ skipped++; continue; }
     const q={id:uid(), subject:raw.subject, difficulty:DIFFS.includes(raw.difficulty)?raw.difficulty:'Extension',
       type:raw.type, topic:raw.topic||'', prompt:raw.prompt, solution:raw.solution||'', createdAt:Date.now()+added};
+    if(raw.diagramSvg) q.diagramSvg = raw.diagramSvg;
+    if(raw.imageUrl) q.imageUrl = raw.imageUrl;
     if(raw.type==='mcq'){
       if(!Array.isArray(raw.options) || raw.options.length<2 || typeof raw.correctIndex!=='number'){ skipped++; continue; }
       q.options=raw.options; q.correctIndex=raw.correctIndex;
@@ -602,6 +604,13 @@ function renderQuestionBlock(q, answerState, onAnswerChange, revealed){
   const box=el(`<div></div>`);
   box.appendChild(el(`<span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span>`));
   box.appendChild(el(`<div class="q-prompt">${esc(q.prompt)}</div>`));
+  if(q.diagramSvg){
+    const dwrap=el(`<div style="background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px;margin-bottom:14px;display:flex;justify-content:center;"></div>`);
+    dwrap.innerHTML = q.diagramSvg;
+    box.appendChild(dwrap);
+  } else if(q.imageUrl){
+    box.appendChild(el(`<img src="${esc(q.imageUrl)}" style="max-width:100%;border-radius:5px;border:1px solid var(--line);margin-bottom:14px;display:block;">`));
+  }
 
   if(q.type==='mcq'){
     const opts=el(`<div class="opts"></div>`);
