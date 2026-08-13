@@ -268,7 +268,8 @@ function buildAddChildControl(style){
 // ---------- QUESTION BANK ----------
 function blankQForm(){
   return {subject:'Maths', topic:'', difficulty:'Extension', type:'mcq',
-    prompt:'', options:['','','',''], correctIndex:0, correctAnswer:'', solution:''};
+    prompt:'', options:['','','',''], correctIndex:0, correctAnswer:'', solution:'',
+    timeMinutes:2, marks:1};
 }
 let qForm = blankQForm();
 
@@ -287,6 +288,16 @@ function renderQForm(){
     </div>
     <label class="field">Topic (e.g. "Quadratics", "Persuasive writing")</label>
     <input type="text" id="qf-topic" value="${esc(qForm.topic)}">
+    <div class="row">
+      <div>
+        <label class="field">Expected time (minutes)</label>
+        <input type="number" id="qf-time" value="${qForm.timeMinutes}" min="0.5" step="0.5">
+      </div>
+      <div>
+        <label class="field">Marks</label>
+        <input type="number" id="qf-marks" value="${qForm.marks}" min="1" step="1">
+      </div>
+    </div>
     <label class="field">Question prompt</label>
     <textarea id="qf-prompt">${esc(qForm.prompt)}</textarea>
     <div id="qf-type-fields"></div>
@@ -336,10 +347,13 @@ async function saveQuestion(){
   qForm.topic=document.getElementById('qf-topic').value;
   qForm.prompt=document.getElementById('qf-prompt').value;
   qForm.solution=document.getElementById('qf-solution').value;
+  qForm.timeMinutes=+document.getElementById('qf-time').value || 2;
+  qForm.marks=+document.getElementById('qf-marks').value || 1;
   state.qFormError='';
   if(!qForm.prompt.trim()){ state.qFormError='Add a question prompt first.'; render(); return; }
   const q={id:uid(), subject:qForm.subject, difficulty:qForm.difficulty, type:qForm.type,
-    topic:qForm.topic, prompt:qForm.prompt, solution:qForm.solution, createdAt:Date.now()};
+    topic:qForm.topic, prompt:qForm.prompt, solution:qForm.solution, createdAt:Date.now(),
+    timeMinutes:qForm.timeMinutes, marks:qForm.marks};
   if(qForm.type==='mcq'){
     if(qForm.options.some(o=>!o.trim())){ state.qFormError='Fill in all 4 options.'; render(); return; }
     q.options=[...qForm.options]; q.correctIndex=qForm.correctIndex;
@@ -362,7 +376,9 @@ async function bulkImport(){
   for(const raw of items){
     if(!raw || !SUBJECTS.includes(raw.subject) || !raw.prompt || !raw.type){ skipped++; continue; }
     const q={id:uid(), subject:raw.subject, difficulty:DIFFS.includes(raw.difficulty)?raw.difficulty:'Extension',
-      type:raw.type, topic:raw.topic||'', prompt:raw.prompt, solution:raw.solution||'', createdAt:Date.now()+added};
+      type:raw.type, topic:raw.topic||'', prompt:raw.prompt, solution:raw.solution||'', createdAt:Date.now()+added,
+      timeMinutes: (typeof raw.timeMinutes==='number' && raw.timeMinutes>0) ? raw.timeMinutes : 2,
+      marks: (typeof raw.marks==='number' && raw.marks>0) ? raw.marks : 1};
     if(raw.diagramSvg) q.diagramSvg = raw.diagramSvg;
     if(raw.imageUrl) q.imageUrl = raw.imageUrl;
     if(raw.type==='mcq'){
@@ -397,10 +413,19 @@ async function deleteQuestion(id){
 }
 
 // ---------- TEST BUILDER ----------
-let testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set()};
+let testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set(), timeLimitTouched:false};
+
+function sumMinutes(ids){
+  return state.qbank.filter(q=>ids.has(q.id)).reduce((s,q)=>s+(q.timeMinutes||2),0);
+}
+function sumMarks(ids){
+  return state.qbank.filter(q=>ids.has(q.id)).reduce((s,q)=>s+(q.marks||1),0);
+}
 
 function renderTestForm(){
   const pool=state.qbank.filter(q=>q.subject===testForm.subject);
+  const suggested=Math.ceil(sumMinutes(testForm.questionIds));
+  const totalMarks=sumMarks(testForm.questionIds);
   return `
   <div class="card">
     <label class="field">Test title</label>
@@ -415,12 +440,13 @@ function renderTestForm(){
         <input type="number" id="tf-time" value="${testForm.timeLimitMins}" min="5">
       </div>
     </div>
+    <div class="mini" style="margin:-6px 0 10px;">${testForm.questionIds.size? `Selected questions add up to ${suggested} min · ${totalMarks} mark${totalMarks===1?'':'s'} total.${testForm.timeLimitTouched?' (you\'ve set a custom time limit)':' Time limit auto-set from this — edit the box above to override.'}`:'Select questions below to auto-calculate a suggested time.'}</div>
     <label class="field">Select questions from the ${testForm.subject} bank (${pool.length} available)</label>
     <div class="checkbox-list" id="tf-list">
       ${pool.length? pool.map(q=>`
         <div class="checkbox-item">
           <input type="checkbox" data-id="${q.id}" class="tf-check" ${testForm.questionIds.has(q.id)?'checked':''}>
-          <div><span class="tag diff">${q.difficulty}</span>${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,70))}${q.prompt.length>70?'…':''}</div>
+          <div><span class="tag diff">${q.difficulty}</span><span class="mini">${q.timeMinutes||2} min · ${q.marks||1} mk</span> — ${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,60))}${q.prompt.length>60?'…':''}</div>
         </div>`).join('') : '<div class="mini">No questions in this subject yet — add some to the bank first.</div>'}
     </div>
     <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
@@ -438,7 +464,7 @@ async function saveTest(){
   if(testForm.questionIds.size===0){ state.tfFormError='Select at least one question.'; render(); return; }
   const t={id:uid(), title:testForm.title, subject:testForm.subject,
     timeLimitMins:testForm.timeLimitMins, questionIds:[...testForm.questionIds], createdAt:Date.now()};
-  testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set()};
+  testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set(), timeLimitTouched:false};
   render();
   await db.collection('tests').doc(t.id).set(t);
 }
@@ -469,7 +495,7 @@ function renderManage(){
   wrap.appendChild(el(`<h2 class="section-title">Bulk add questions</h2>`));
   const bulkCard=el(`<div class="card">
     <div class="mini" style="margin-bottom:8px;">Paste a block of questions (ask Claude for a batch in this format) and add them all in one go — no need to fill in the form for each one.</div>
-    <textarea id="bulk-text" style="min-height:140px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","difficulty":"Extension","type":"mcq","topic":"Indices","prompt":"...","options":["A","B","C","D"],"correctIndex":0,"solution":"..."}]'>${esc(state.bulkText)}</textarea>
+    <textarea id="bulk-text" style="min-height:140px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","difficulty":"Extension","type":"mcq","topic":"Indices","timeMinutes":2,"marks":1,"prompt":"...","options":["A","B","C","D"],"correctIndex":0,"solution":"..."}]'>${esc(state.bulkText)}</textarea>
     <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
       <button class="btn" id="bulk-import-btn">Import all</button>
       ${state.bulkMsg?`<span class="mini" style="color:${state.bulkMsg.startsWith('Added')?'var(--good)':'var(--bad)'};">${esc(state.bulkMsg)}</span>`:''}
@@ -501,7 +527,7 @@ function renderManage(){
         const isPending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
         const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;">
           <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
-          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span>
+          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span>
           <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
         </div>`);
         card.querySelector('.close-x').addEventListener('click', ()=>deleteQuestion(q.id));
@@ -513,11 +539,14 @@ function renderManage(){
   wrap.appendChild(el(`<h2 class="section-title">Build a timed test</h2>`));
   const tf=el(renderTestForm());
   wrap.appendChild(tf);
-  tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); render(); });
+  tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); testForm.timeLimitTouched=false; render(); });
+  tf.querySelector('#tf-time').addEventListener('input', e=>{ testForm.timeLimitTouched=true; testForm.timeLimitMins=+e.target.value||testForm.timeLimitMins; });
   tf.querySelectorAll('.tf-check').forEach(cb=>{
     cb.addEventListener('change', e=>{
       const id=e.target.dataset.id;
       if(e.target.checked) testForm.questionIds.add(id); else testForm.questionIds.delete(id);
+      if(!testForm.timeLimitTouched) testForm.timeLimitMins=Math.max(5, Math.ceil(sumMinutes(testForm.questionIds)));
+      render();
     });
   });
   tf.querySelector('#tf-save').addEventListener('click', saveTest);
@@ -564,7 +593,7 @@ function renderPractice(){
       const card=el(`<div class="card subj-${t.subject}">
         <span class="tag ${t.subject}">${t.subject}</span>
         <strong style="font-family:var(--font-display);font-size:1.05rem;">${esc(t.title)}</strong>
-        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes</div>
+        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks</div>
         <button class="btn">Start test</button>
       </div>`);
       card.querySelector('button').addEventListener('click', ()=>startTest(t));
@@ -578,7 +607,7 @@ function renderPractice(){
   } else {
     state.qbank.slice().reverse().forEach(q=>{
       const card=el(`<div class="card subj-${q.subject}">
-        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span>
+        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk</span>
         <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
         <button class="btn secondary">Answer this</button>
       </div>`);
@@ -735,13 +764,14 @@ async function submitQuestion(){
   const a=state.activeAttempt;
   a.submitted=true;
   const q=a.question;
-  let correct=null;
-  if(q.type==='mcq') correct = a.selected===q.correctIndex;
-  else if(q.type==='numeric') correct = String(a.given||'').trim()===String(q.correctAnswer).trim();
+  const marks=q.marks||1;
+  let correct=null, earned=null;
+  if(q.type==='mcq'){ correct = a.selected===q.correctIndex; earned = correct?marks:0; }
+  else if(q.type==='numeric'){ correct = String(a.given||'').trim()===String(q.correctAnswer).trim(); earned = correct?marks:0; }
   const resultId=uid();
   const detailEntry={qId:q.id, prompt:q.prompt, given: q.type==='mcq'? (q.options[a.selected]??'(no answer)') : a.given, correct};
   const result={id:resultId, childId:state.currentChild, type:'question', refId:q.id, subject:q.subject, topic:q.topic,
-    date:Date.now(), autoCorrect:correct, selfMark:null, detail:[detailEntry]};
+    date:Date.now(), autoCorrect:correct, selfMark:null, marks, earned, detail:[detailEntry]};
   render();
   await db.collection('results').doc(resultId).set(result);
   // hook to capture selfMark for written type after user picks it
@@ -750,8 +780,10 @@ async function submitQuestion(){
     if(state.activeAttempt.selfMark){
       const mark=state.activeAttempt.selfMark;
       clearInterval(observer);
+      const earnedFromSelf = mark==='correct'?marks : mark==='partial'?marks/2 : 0;
       await db.collection('results').doc(resultId).update({
         selfMark:mark,
+        earned:earnedFromSelf,
         detail:[{...detailEntry, selfMark:mark}]
       });
     }
@@ -764,8 +796,9 @@ async function submitTest(){
   a.submitted=true;
   let autoScore=0, autoMax=0, hasWritten=false;
   a.questions.forEach((q,i)=>{
-    if(q.type==='mcq'){ autoMax++; if(a.answers[i].selected===q.correctIndex) autoScore++; }
-    else if(q.type==='numeric'){ autoMax++; if(String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim()) autoScore++; }
+    const marks=q.marks||1;
+    if(q.type==='mcq'){ autoMax+=marks; if(a.answers[i].selected===q.correctIndex) autoScore+=marks; }
+    else if(q.type==='numeric'){ autoMax+=marks; if(String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim()) autoScore+=marks; }
     else hasWritten=true;
   });
   a.autoScore=autoScore; a.autoMax=autoMax; a.hasWritten=hasWritten;
@@ -779,14 +812,16 @@ async function finalizeTestSelfMarks(){
     let correct=null;
     if(q.type==='mcq') correct=a.answers[i].selected===q.correctIndex;
     else if(q.type==='numeric') correct=String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim();
-    return {qId:q.id, prompt:q.prompt, subject:q.subject,
+    return {qId:q.id, prompt:q.prompt, subject:q.subject, marks:q.marks||1,
       given: q.type==='mcq'? (q.options[a.answers[i].selected]??'(no answer)') : a.answers[i].given,
       correct, selfMark:a.answers[i].selfMark||null};
   });
-  const writtenSelfCorrect=detail.filter(d=>d.selfMark==='correct').length;
-  const writtenPartial=detail.filter(d=>d.selfMark==='partial').length;
-  const totalMarked=a.autoMax + a.questions.filter(q=>q.type==='short').length;
-  const totalScore=a.autoScore + writtenSelfCorrect + writtenPartial*0.5;
+  const writtenMarksEarned = detail
+    .filter(d=>d.selfMark)
+    .reduce((s,d)=> s + (d.selfMark==='correct'? d.marks : d.selfMark==='partial'? d.marks/2 : 0), 0);
+  const writtenMaxMarks = a.questions.filter(q=>q.type==='short').reduce((s,q)=>s+(q.marks||1),0);
+  const totalMarked=a.autoMax + writtenMaxMarks;
+  const totalScore=a.autoScore + writtenMarksEarned;
   const resultId=uid();
   const result={id:resultId, childId:state.currentChild, type:'test', refId:a.test.id, title:a.test.title, subject:a.test.subject,
     date:Date.now(), score:totalScore, maxScore:totalMarked,
@@ -814,9 +849,11 @@ function renderResults(){
   const tbody=table.querySelector('tbody');
   list.forEach(r=>{
     let scoreText, pct;
+    const m = r.marks||1;
     if(r.type==='question'){
-      if(r.autoCorrect!==null){ scoreText = r.autoCorrect? '1/1':'0/1'; pct = r.autoCorrect?100:0; }
-      else { scoreText = r.selfMark? {correct:'✓',partial:'~',incorrect:'✗'}[r.selfMark] : 'pending'; pct = r.selfMark==='correct'?100:r.selfMark==='partial'?50:0; }
+      if(r.autoCorrect!==null){ scoreText = `${r.autoCorrect?m:0}/${m}`; pct = r.autoCorrect?100:0; }
+      else if(r.selfMark){ const e=r.earned??0; scoreText = `${e}/${m}`; pct = m? (e/m*100):0; }
+      else { scoreText='pending'; pct=0; }
     } else {
       scoreText = `${r.score}/${r.maxScore}`; pct = r.maxScore? (r.score/r.maxScore*100):0;
     }
