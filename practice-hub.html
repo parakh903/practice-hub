@@ -176,8 +176,15 @@ function markLoaded(key){
   if(Object.values(loadedFlags).every(Boolean)) state.loaded=true;
 }
 
+function getRememberedTab(){
+  try{ return localStorage.getItem('ph_last_tab'); } catch(e){ return null; }
+}
+function setRememberedTab(t){
+  try{ localStorage.setItem('ph_last_tab', t); } catch(e){}
+}
+
 let state={
-  tab:'practice',
+  tab: (getRememberedTab() && ['practice','results','manage'].includes(getRememberedTab())) ? getRememberedTab() : 'practice',
   currentChild:null,
   children:[],
   qbank:[],
@@ -250,7 +257,7 @@ function initListeners(){
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; }
 function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-function setTab(t){ state.tab=t; state.activeAttempt=null; render(); }
+function setTab(t){ state.tab=t; state.activeAttempt=null; setRememberedTab(t); render(); }
 
 // ---------- CHILD MANAGEMENT ----------
 function buildAddChildControl(style){
