@@ -703,6 +703,7 @@ function renderQuestionBlock(q, answerState, onAnswerChange, revealed){
 
   if(q.type==='mcq'){
     const opts=el(`<div class="opts"></div>`);
+    const optDivs=[];
     q.options.forEach((opt,i)=>{
       let cls='opt';
       if(revealed){
@@ -710,7 +711,12 @@ function renderQuestionBlock(q, answerState, onAnswerChange, revealed){
         else if(answerState.selected===i) cls+=' incorrect';
       } else if(answerState.selected===i) cls+=' selected';
       const o=el(`<div class="${cls}">${String.fromCharCode(65+i)}. ${esc(opt)}</div>`);
-      if(!revealed) o.addEventListener('click', ()=>{ answerState.selected=i; onAnswerChange(); });
+      optDivs.push(o);
+      if(!revealed) o.addEventListener('click', ()=>{
+        answerState.selected=i;
+        optDivs.forEach((d,j)=>{ d.classList.toggle('selected', j===i); });
+        onAnswerChange();
+      });
       opts.appendChild(o);
     });
     box.appendChild(opts);
@@ -909,10 +915,6 @@ function renderResults(){
     app.appendChild(el(`<div class="empty">No attempts yet.</div>`));
     return;
   }
-  const table=el(`<table>
-    <thead><tr><th>Date</th><th>Type</th><th>Subject</th><th>Item</th><th>Time</th><th>Score</th></tr></thead>
-    <tbody></tbody></table>`);
-  const tbody=table.querySelector('tbody');
   list.forEach(r=>{
     let scoreText, pct;
     const m = r.marks||1;
@@ -923,38 +925,37 @@ function renderResults(){
     } else {
       scoreText = `${r.score}/${r.maxScore}`; pct = r.maxScore? (r.score/r.maxScore*100):0;
     }
-    let timeText='—', timeColor='var(--ink-soft)';
+    let timeText=null, timeColor='var(--ink-soft)';
     if(r.timeTakenSecs!=null && r.expectedMinutes){
       const tookMin = r.timeTakenSecs/60;
       const ratio = tookMin/r.expectedMinutes;
       const tookLabel = tookMin<1 ? '<1m' : `${Math.round(tookMin)}m`;
-      timeText = `${tookLabel} / ~${r.expectedMinutes}m`;
+      timeText = `${tookLabel} / ~${r.expectedMinutes}m expected`;
       if(ratio>=1.5) timeColor='var(--bad)';
       else if(ratio<=0.6) timeColor='var(--maths)';
     }
-    const row=el(`<tr class="result-row">
-      <td class="mini">${new Date(r.date).toLocaleDateString()}</td>
-      <td>${r.type==='test'?'Test':'Question'}</td>
-      <td><span class="tag ${r.subject}">${r.subject}</span></td>
-      <td>${esc(r.title||r.topic||'—')}</td>
-      <td class="mini" style="color:${timeColor};font-family:var(--font-mono);">${timeText}</td>
-      <td><span class="score-pill ${scoreLabel(pct)}">${scoreText}</span></td>
-    </tr>`);
-    row.addEventListener('click', ()=>{ expandedResult = expandedResult===r.id? null : r.id; renderResultsBody(); });
-    tbody.appendChild(row);
+    const card=el(`<div class="card subj-${r.subject}" style="padding:14px 16px;cursor:pointer;"></div>`);
+    card.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+      <div>
+        <span class="tag ${r.subject}">${r.subject}</span><span class="tag diff">${r.type==='test'?'Test':'Question'}</span>
+        <div style="margin-top:6px;font-size:0.92rem;font-weight:500;">${esc(r.title||r.topic||'Untitled')}</div>
+        <div class="mini" style="margin-top:3px;">${new Date(r.date).toLocaleDateString()} ${new Date(r.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${timeText?` · <span style="color:${timeColor};font-family:var(--font-mono);">${timeText}</span>`:''}</div>
+      </div>
+      <span class="score-pill ${scoreLabel(pct)}" style="flex:0 0 auto;">${scoreText}</span>
+    </div>`));
+    card.addEventListener('click', ()=>{ expandedResult = expandedResult===r.id? null : r.id; renderResultsBody(); });
+    app.appendChild(card);
     if(expandedResult===r.id){
-      const detailRow=el(`<tr><td colspan="6"><div class="detail-panel"></div></td></tr>`);
-      const panel=detailRow.querySelector('.detail-panel');
-      r.detail.forEach(d=>{
+      const panel=el(`<div class="detail-panel" style="margin-top:-8px;margin-bottom:16px;"></div>`);
+      (r.detail||[]).forEach(d=>{
         panel.appendChild(el(`<div style="margin-bottom:10px;">
-          <div style="font-size:0.85rem;"><strong>${esc((d.prompt||'').slice(0,90))}${(d.prompt||'').length>90?'…':''}</strong></div>
+          <div style="font-size:0.85rem;"><strong>${esc((d.prompt||'').slice(0,120))}${(d.prompt||'').length>120?'…':''}</strong></div>
           <div class="mini">Answer given: ${esc(String(d.given??'—'))} ${d.correct!==null&&d.correct!==undefined? (d.correct?' · correct':' · incorrect') : (d.selfMark? ' · '+d.selfMark : '')}</div>
         </div>`));
       });
-      tbody.appendChild(detailRow);
+      app.appendChild(panel);
     }
   });
-  app.appendChild(table);
 }
 function renderResultsBody(){ render(); }
 
