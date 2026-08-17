@@ -938,7 +938,7 @@ async function finalizeTestSelfMarks(){
     let correct=null;
     if(q.type==='mcq') correct=a.answers[i].selected===q.correctIndex;
     else if(q.type==='numeric') correct=String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim();
-    return {qId:q.id, prompt:q.prompt, subject:q.subject, marks:q.marks||1,
+    return {qId:q.id, prompt:q.prompt, subject:q.subject, topic:q.topic||'', marks:q.marks||1,
       given: q.type==='mcq'? (q.options[a.answers[i].selected]??'(no answer)') : a.answers[i].given,
       correct, selfMark:a.answers[i].selfMark||null};
   });
@@ -1024,16 +1024,28 @@ function renderResults(){
   const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
   const list = allList.filter(r=>passesFilter(r.subject));
 
-  // By topic — weakest first, adhoc questions only (topics aren't tracked per-question inside tests)
+  // By topic — weakest first, combines standalone questions AND questions inside completed tests
   const topicStats = {};
+  function addToTopic(topic, subject, earned, total){
+    if(!topic) return;
+    if(!topicStats[topic]) topicStats[topic]={earned:0,total:0,subject};
+    topicStats[topic].earned+=earned; topicStats[topic].total+=total;
+  }
   list.filter(r=>r.type==='question' && r.topic).forEach(r=>{
     const p = pctOf(r);
     if(p===null) return;
-    const key=r.topic;
-    if(!topicStats[key]) topicStats[key]={earned:0,total:0,subject:r.subject};
     const m=r.marks||1;
     const earned = r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0);
-    topicStats[key].earned+=earned; topicStats[key].total+=m;
+    addToTopic(r.topic, r.subject, earned, m);
+  });
+  list.filter(r=>r.type==='test').forEach(r=>{
+    (r.detail||[]).forEach(d=>{
+      if(!d.topic) return; // older tests taken before topic-tracking was added won't have this
+      const m=d.marks||1;
+      const earned = d.correct!==null && d.correct!==undefined ? (d.correct?m:0) : (d.selfMark==='correct'?m : d.selfMark==='partial'?m/2 : d.selfMark==='incorrect'?0 : null);
+      if(earned===null) return;
+      addToTopic(d.topic, d.subject, earned, m);
+    });
   });
   const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
   if(topicRows.length){
