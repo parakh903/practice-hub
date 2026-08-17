@@ -632,60 +632,72 @@ function renderPractice(){
     return matches[0] || null;
   }
 
+  function testCard(t, done){
+    const card=el(`<div class="card subj-${t.subject}" style="position:relative;${done?'opacity:0.75;':''}">
+      ${done?`<span class="score-pill ${scoreLabel(done.maxScore? done.score/done.maxScore*100:0)}" style="position:absolute;top:16px;right:16px;">Done · ${done.score}/${done.maxScore}</span>`:''}
+      <span class="tag ${t.subject}">${t.subject}</span>
+      <strong style="font-family:var(--font-display);font-size:1.05rem;">${esc(t.title)}</strong>
+      <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks · posted ${formatDate(t.createdAt)}${done?` · took ${Math.round(done.timeTakenSecs/60)} min`:''}</div>
+      <button class="btn">${done?'Retake test':'Start test'}</button>
+    </div>`);
+    card.querySelector('button').addEventListener('click', ()=>startTest(t));
+    return card;
+  }
+  function questionCard(q, done){
+    let doneBadge='', timeNote='';
+    if(done){
+      const m=done.marks||1;
+      const earned = done.autoCorrect!==null ? (done.autoCorrect?m:0) : (done.earned??null);
+      const label = earned===null ? 'Answered · pending self-mark' : `Answered · ${earned}/${m}`;
+      doneBadge=`<span class="score-pill ${earned===null?'mid':scoreLabel(m?earned/m*100:0)}" style="position:absolute;top:16px;right:16px;">${label}</span>`;
+      if(done.timeTakenSecs){
+        const took=Math.round(done.timeTakenSecs/60), exp=done.expectedMinutes||q.timeMinutes||2;
+        timeNote = ` · took ${took<1?'<1':took} min (expected ~${exp})`;
+      }
+    }
+    const card=el(`<div class="card subj-${q.subject}" style="position:relative;${done?'opacity:0.75;':''}">
+      ${doneBadge}
+      <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk${timeNote}</span><span class="tag diff">posted ${formatDate(q.createdAt)}</span>
+      <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
+      <button class="btn secondary">${done?'Answer again':'Answer this'}</button>
+    </div>`);
+    card.querySelector('button').addEventListener('click', ()=>startQuestion(q));
+    return card;
+  }
+  function subheader(text){ return el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${esc(text)}</div>`); }
+
   app.appendChild(el(`<h2 class="section-title">Timed tests</h2>`));
   if(state.tests.length===0){
     app.appendChild(el(`<div class="empty">No tests available yet.</div>`));
   } else {
-    const sortedTests = state.tests.slice().sort((a,b)=>{
-      const da=lastAttemptFor('test', a.id), db_=lastAttemptFor('test', b.id);
-      if(!!da!==!!db_) return da? 1 : -1; // done ones sink to bottom
-      return (b.createdAt||0)-(a.createdAt||0);
-    });
-    sortedTests.forEach(t=>{
-      const done = lastAttemptFor('test', t.id);
-      const card=el(`<div class="card subj-${t.subject}" style="position:relative;${done?'opacity:0.75;':''}">
-        ${done?`<span class="score-pill ${scoreLabel(done.maxScore? done.score/done.maxScore*100:0)}" style="position:absolute;top:16px;right:16px;">Done · ${done.score}/${done.maxScore}</span>`:''}
-        <span class="tag ${t.subject}">${t.subject}</span>
-        <strong style="font-family:var(--font-display);font-size:1.05rem;">${esc(t.title)}</strong>
-        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks · posted ${formatDate(t.createdAt)}${done?` · took ${Math.round(done.timeTakenSecs/60)} min`:''}</div>
-        <button class="btn">${done?'Retake test':'Start test'}</button>
-      </div>`);
-      card.querySelector('button').addEventListener('click', ()=>startTest(t));
-      app.appendChild(card);
-    });
+    const byRecency=(a,b)=>(b.createdAt||0)-(a.createdAt||0);
+    const todoTests = state.tests.filter(t=>!lastAttemptFor('test', t.id)).sort(byRecency);
+    const doneTests = state.tests.filter(t=>lastAttemptFor('test', t.id)).sort(byRecency);
+    if(todoTests.length){
+      app.appendChild(subheader(`To do (${todoTests.length})`));
+      todoTests.forEach(t=>app.appendChild(testCard(t, null)));
+    }
+    if(doneTests.length){
+      app.appendChild(subheader(`Done (${doneTests.length})`));
+      doneTests.forEach(t=>app.appendChild(testCard(t, lastAttemptFor('test', t.id))));
+    }
   }
 
   app.appendChild(el(`<h2 class="section-title">Adhoc questions</h2>`));
   if(state.qbank.length===0){
     app.appendChild(el(`<div class="empty">No questions in the bank yet.</div>`));
   } else {
-    const sortedQ = state.qbank.slice().sort((a,b)=>{
-      const da=lastAttemptFor('question', a.id), db_=lastAttemptFor('question', b.id);
-      if(!!da!==!!db_) return da? 1 : -1; // done ones sink to bottom
-      return (b.createdAt||0)-(a.createdAt||0);
-    });
-    sortedQ.forEach(q=>{
-      const done = lastAttemptFor('question', q.id);
-      let doneBadge='', timeNote='';
-      if(done){
-        const m=done.marks||1;
-        const earned = done.autoCorrect!==null ? (done.autoCorrect?m:0) : (done.earned??null);
-        const label = earned===null ? 'Answered · pending self-mark' : `Answered · ${earned}/${m}`;
-        doneBadge=`<span class="score-pill ${earned===null?'mid':scoreLabel(m?earned/m*100:0)}" style="position:absolute;top:16px;right:16px;">${label}</span>`;
-        if(done.timeTakenSecs){
-          const took=Math.round(done.timeTakenSecs/60), exp=done.expectedMinutes||q.timeMinutes||2;
-          timeNote = ` · took ${took<1?'<1':took} min (expected ~${exp})`;
-        }
-      }
-      const card=el(`<div class="card subj-${q.subject}" style="position:relative;${done?'opacity:0.75;':''}">
-        ${doneBadge}
-        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk${timeNote}</span><span class="tag diff">posted ${formatDate(q.createdAt)}</span>
-        <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
-        <button class="btn secondary">${done?'Answer again':'Answer this'}</button>
-      </div>`);
-      card.querySelector('button').addEventListener('click', ()=>startQuestion(q));
-      app.appendChild(card);
-    });
+    const byRecency=(a,b)=>(b.createdAt||0)-(a.createdAt||0);
+    const todoQ = state.qbank.filter(q=>!lastAttemptFor('question', q.id)).sort(byRecency);
+    const doneQ = state.qbank.filter(q=>lastAttemptFor('question', q.id)).sort(byRecency);
+    if(todoQ.length){
+      app.appendChild(subheader(`To do (${todoQ.length})`));
+      todoQ.forEach(q=>app.appendChild(questionCard(q, null)));
+    }
+    if(doneQ.length){
+      app.appendChild(subheader(`Done (${doneQ.length})`));
+      doneQ.forEach(q=>app.appendChild(questionCard(q, lastAttemptFor('question', q.id))));
+    }
   }
 }
 
@@ -923,10 +935,35 @@ function renderResults(){
   }
   const list=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
   app.appendChild(el(`<h2 class="section-title">Results for ${esc(state.children.find(c=>c.id===state.currentChild)?.name||'')}</h2>`));
+
+  // Still to do — items with no attempt yet by this child
+  const attemptedTestIds = new Set(list.filter(r=>r.type==='test').map(r=>r.refId));
+  const attemptedQIds = new Set(list.filter(r=>r.type==='question').map(r=>r.refId));
+  const todoTests = state.tests.filter(t=>!attemptedTestIds.has(t.id));
+  const todoQ = state.qbank.filter(q=>!attemptedQIds.has(q.id));
+  if(todoTests.length || todoQ.length){
+    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Still to do (${todoTests.length+todoQ.length})</div>`));
+    todoTests.forEach(t=>{
+      app.appendChild(el(`<div class="card subj-${t.subject}" style="padding:12px 16px;opacity:0.8;">
+        <span class="tag ${t.subject}">${t.subject}</span><span class="tag diff">Test</span>
+        <div style="margin-top:6px;font-size:0.9rem;">${esc(t.title)}</div>
+        <div class="mini" style="margin-top:3px;">posted ${formatDate(t.createdAt)}</div>
+      </div>`));
+    });
+    todoQ.forEach(q=>{
+      app.appendChild(el(`<div class="card subj-${q.subject}" style="padding:12px 16px;opacity:0.8;">
+        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">Question</span>
+        <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,80))}${q.prompt.length>80?'…':''}</div>
+        <div class="mini" style="margin-top:3px;">posted ${formatDate(q.createdAt)}</div>
+      </div>`));
+    });
+  }
+
   if(list.length===0){
-    app.appendChild(el(`<div class="empty">No attempts yet.</div>`));
+    if(todoTests.length===0 && todoQ.length===0) app.appendChild(el(`<div class="empty">No attempts yet.</div>`));
     return;
   }
+  app.appendChild(el(`<div class="mini" style="margin:18px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Done (${list.length})</div>`));
   list.forEach(r=>{
     let scoreText, pct;
     const m = r.marks||1;
@@ -946,12 +983,15 @@ function renderResults(){
       if(ratio>=1.5) timeColor='var(--bad)';
       else if(ratio<=0.6) timeColor='var(--maths)';
     }
+    // look up when the original question/test was posted
+    const source = r.type==='test' ? state.tests.find(t=>t.id===r.refId) : state.qbank.find(q=>q.id===r.refId);
+    const postedText = source ? `posted ${formatDate(source.createdAt)} · ` : '';
     const card=el(`<div class="card subj-${r.subject}" style="padding:14px 16px;cursor:pointer;"></div>`);
     card.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
       <div>
         <span class="tag ${r.subject}">${r.subject}</span><span class="tag diff">${r.type==='test'?'Test':'Question'}</span>
         <div style="margin-top:6px;font-size:0.92rem;font-weight:500;">${esc(r.title||r.topic||'Untitled')}</div>
-        <div class="mini" style="margin-top:3px;">${new Date(r.date).toLocaleDateString()} ${new Date(r.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${timeText?` · <span style="color:${timeColor};font-family:var(--font-mono);">${timeText}</span>`:''}</div>
+        <div class="mini" style="margin-top:3px;">${postedText}done ${new Date(r.date).toLocaleDateString()} ${new Date(r.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${timeText?` · <span style="color:${timeColor};font-family:var(--font-mono);">${timeText}</span>`:''}</div>
       </div>
       <span class="score-pill ${scoreLabel(pct)}" style="flex:0 0 auto;">${scoreText}</span>
     </div>`));
