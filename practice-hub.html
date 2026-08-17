@@ -198,7 +198,8 @@ let state={
   qFormError:'',
   tfFormError:'',
   bulkText:'',
-  bulkMsg:''
+  bulkMsg:'',
+  subjectFilter:'All'
 };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -260,6 +261,16 @@ function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','
 function formatDate(ts){
   if(!ts) return '';
   return new Date(ts).toLocaleDateString(undefined, {day:'numeric', month:'short'});
+}
+function renderSubjectFilter(){
+  const bar=el(`<div class="row" style="margin-bottom:16px;flex-wrap:wrap;"></div>`);
+  bar.style.display='flex'; bar.style.gap='6px';
+  ['All', ...SUBJECTS].forEach(s=>{
+    const chip=el(`<div class="chip ${state.subjectFilter===s?'active':''}" style="flex:0 0 auto;">${s}</div>`);
+    chip.addEventListener('click', ()=>{ state.subjectFilter=s; render(); });
+    bar.appendChild(chip);
+  });
+  return bar;
 }
 
 function setTab(t){ state.tab=t; state.activeAttempt=null; setRememberedTab(t); render(); }
@@ -666,38 +677,28 @@ function renderPractice(){
   }
   function subheader(text){ return el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${esc(text)}</div>`); }
 
-  app.appendChild(el(`<h2 class="section-title">Timed tests</h2>`));
-  if(state.tests.length===0){
-    app.appendChild(el(`<div class="empty">No tests available yet.</div>`));
-  } else {
-    const byRecency=(a,b)=>(b.createdAt||0)-(a.createdAt||0);
-    const todoTests = state.tests.filter(t=>!lastAttemptFor('test', t.id)).sort(byRecency);
-    const doneTests = state.tests.filter(t=>lastAttemptFor('test', t.id)).sort(byRecency);
-    if(todoTests.length){
-      app.appendChild(subheader(`To do (${todoTests.length})`));
-      todoTests.forEach(t=>app.appendChild(testCard(t, null)));
-    }
-    if(doneTests.length){
-      app.appendChild(subheader(`Done (${doneTests.length})`));
-      doneTests.forEach(t=>app.appendChild(testCard(t, lastAttemptFor('test', t.id))));
-    }
+  app.appendChild(renderSubjectFilter());
+
+  const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
+  const testItems = state.tests.filter(t=>passesFilter(t.subject)).map(t=>({kind:'test', obj:t, done:lastAttemptFor('test', t.id)}));
+  const qItems = state.qbank.filter(q=>passesFilter(q.subject)).map(q=>({kind:'question', obj:q, done:lastAttemptFor('question', q.id)}));
+  const allItems = [...testItems, ...qItems];
+
+  if(allItems.length===0){
+    app.appendChild(el(`<div class="empty">Nothing in this subject yet.</div>`));
+    return;
   }
 
-  app.appendChild(el(`<h2 class="section-title">Adhoc questions</h2>`));
-  if(state.qbank.length===0){
-    app.appendChild(el(`<div class="empty">No questions in the bank yet.</div>`));
-  } else {
-    const byRecency=(a,b)=>(b.createdAt||0)-(a.createdAt||0);
-    const todoQ = state.qbank.filter(q=>!lastAttemptFor('question', q.id)).sort(byRecency);
-    const doneQ = state.qbank.filter(q=>lastAttemptFor('question', q.id)).sort(byRecency);
-    if(todoQ.length){
-      app.appendChild(subheader(`To do (${todoQ.length})`));
-      todoQ.forEach(q=>app.appendChild(questionCard(q, null)));
-    }
-    if(doneQ.length){
-      app.appendChild(subheader(`Done (${doneQ.length})`));
-      doneQ.forEach(q=>app.appendChild(questionCard(q, lastAttemptFor('question', q.id))));
-    }
+  const todo = allItems.filter(i=>!i.done).sort((a,b)=>(a.obj.createdAt||0)-(b.obj.createdAt||0)); // oldest posted first
+  const done = allItems.filter(i=>i.done).sort((a,b)=>b.done.date-a.done.date); // most recently done first
+
+  if(todo.length){
+    app.appendChild(subheader(`To do (${todo.length})`));
+    todo.forEach(i=>app.appendChild(i.kind==='test'? testCard(i.obj, null) : questionCard(i.obj, null)));
+  }
+  if(done.length){
+    app.appendChild(subheader(`Done (${done.length})`));
+    done.forEach(i=>app.appendChild(i.kind==='test'? testCard(i.obj, i.done) : questionCard(i.obj, i.done)));
   }
 }
 
@@ -933,34 +934,42 @@ function renderResults(){
     app.appendChild(el(`<div class="empty">${esc(msg)}</div>`));
     return;
   }
-  const list=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
+  const allList=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
   app.appendChild(el(`<h2 class="section-title">Results for ${esc(state.children.find(c=>c.id===state.currentChild)?.name||'')}</h2>`));
+  app.appendChild(renderSubjectFilter());
 
-  // Still to do — items with no attempt yet by this child
-  const attemptedTestIds = new Set(list.filter(r=>r.type==='test').map(r=>r.refId));
-  const attemptedQIds = new Set(list.filter(r=>r.type==='question').map(r=>r.refId));
-  const todoTests = state.tests.filter(t=>!attemptedTestIds.has(t.id));
-  const todoQ = state.qbank.filter(q=>!attemptedQIds.has(q.id));
-  if(todoTests.length || todoQ.length){
-    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Still to do (${todoTests.length+todoQ.length})</div>`));
-    todoTests.forEach(t=>{
-      app.appendChild(el(`<div class="card subj-${t.subject}" style="padding:12px 16px;opacity:0.8;">
-        <span class="tag ${t.subject}">${t.subject}</span><span class="tag diff">Test</span>
-        <div style="margin-top:6px;font-size:0.9rem;">${esc(t.title)}</div>
-        <div class="mini" style="margin-top:3px;">posted ${formatDate(t.createdAt)}</div>
-      </div>`));
-    });
-    todoQ.forEach(q=>{
-      app.appendChild(el(`<div class="card subj-${q.subject}" style="padding:12px 16px;opacity:0.8;">
-        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">Question</span>
-        <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,80))}${q.prompt.length>80?'…':''}</div>
-        <div class="mini" style="margin-top:3px;">posted ${formatDate(q.createdAt)}</div>
-      </div>`));
+  const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
+  const list = allList.filter(r=>passesFilter(r.subject));
+
+  // Still to do — items with no attempt yet by this child, combined & sorted oldest-posted-first
+  const attemptedTestIds = new Set(allList.filter(r=>r.type==='test').map(r=>r.refId));
+  const attemptedQIds = new Set(allList.filter(r=>r.type==='question').map(r=>r.refId));
+  const todoItems = [
+    ...state.tests.filter(t=>!attemptedTestIds.has(t.id) && passesFilter(t.subject)).map(t=>({kind:'test', obj:t})),
+    ...state.qbank.filter(q=>!attemptedQIds.has(q.id) && passesFilter(q.subject)).map(q=>({kind:'question', obj:q}))
+  ].sort((a,b)=>(a.obj.createdAt||0)-(b.obj.createdAt||0));
+
+  if(todoItems.length){
+    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Still to do (${todoItems.length})</div>`));
+    todoItems.forEach(({kind,obj})=>{
+      if(kind==='test'){
+        app.appendChild(el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.8;">
+          <span class="tag ${obj.subject}">${obj.subject}</span><span class="tag diff">Test</span>
+          <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.title)}</div>
+          <div class="mini" style="margin-top:3px;">posted ${formatDate(obj.createdAt)}</div>
+        </div>`));
+      } else {
+        app.appendChild(el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.8;">
+          <span class="tag ${obj.subject}">${obj.subject}</span><span class="tag diff">Question</span>
+          <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.topic)||'(no topic)'} — ${esc(obj.prompt.slice(0,80))}${obj.prompt.length>80?'…':''}</div>
+          <div class="mini" style="margin-top:3px;">posted ${formatDate(obj.createdAt)}</div>
+        </div>`));
+      }
     });
   }
 
   if(list.length===0){
-    if(todoTests.length===0 && todoQ.length===0) app.appendChild(el(`<div class="empty">No attempts yet.</div>`));
+    if(todoItems.length===0) app.appendChild(el(`<div class="empty">${state.subjectFilter==='All'?'No attempts yet.':'Nothing in this subject yet.'}</div>`));
     return;
   }
   app.appendChild(el(`<div class="mini" style="margin:18px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Done (${list.length})</div>`));
