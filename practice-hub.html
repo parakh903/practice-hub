@@ -987,10 +987,23 @@ function renderResults(){
   const weekT = weekAttempts.filter(r=>r.type==='test').length;
   const weekPcts = weekAttempts.map(pctOf).filter(p=>p!==null);
   const weekAvg = weekPcts.length ? Math.round(weekPcts.reduce((a,b)=>a+b,0)/weekPcts.length) : null;
-  app.appendChild(el(`<div class="card" style="padding:12px 16px;margin-bottom:16px;">
+
+  // All-time summary
+  const totalQ = allList.filter(r=>r.type==='question').length;
+  const totalT = allList.filter(r=>r.type==='test').length;
+  const allPcts = allList.map(pctOf).filter(p=>p!==null);
+  const allAvg = allPcts.length ? Math.round(allPcts.reduce((a,b)=>a+b,0)/allPcts.length) : null;
+
+  const summaryRow=el(`<div class="row" style="margin-bottom:16px;"></div>`);
+  summaryRow.appendChild(el(`<div class="card" style="padding:12px 16px;">
     <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">This week</div>
     <div style="font-size:0.95rem;">${weekQ} question${weekQ===1?'':'s'} · ${weekT} test${weekT===1?'':'s'}${weekAvg!==null?` · avg ${weekAvg}%`:''}</div>
   </div>`));
+  summaryRow.appendChild(el(`<div class="card" style="padding:12px 16px;">
+    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">All time</div>
+    <div style="font-size:0.95rem;">${totalQ} question${totalQ===1?'':'s'} · ${totalT} test${totalT===1?'':'s'}${allAvg!==null?` · avg ${allAvg}%`:''}</div>
+  </div>`));
+  app.appendChild(summaryRow);
 
   // Per-subject trend (last 10 attempts each, ignores subject filter chip on purpose)
   const trendRow=el(`<div class="row" style="margin-bottom:16px;"></div>`);
@@ -1023,6 +1036,27 @@ function renderResults(){
 
   const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
   const list = allList.filter(r=>passesFilter(r.subject));
+
+  // Test history — a dedicated, tests-only report so test performance isn't buried among adhoc questions
+  const testResults = list.filter(r=>r.type==='test').sort((a,b)=>b.date-a.date);
+  if(testResults.length){
+    const testPcts = testResults.map(pctOf).filter(p=>p!==null);
+    const testAvg = testPcts.length ? Math.round(testPcts.reduce((a,b)=>a+b,0)/testPcts.length) : null;
+    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Test history (${testResults.length})${testAvg!==null?` — avg ${testAvg}%`:''}</div>`));
+    const testCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
+    testResults.forEach(r=>{
+      const pct = pctOf(r);
+      testCard.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);gap:10px;">
+        <div>
+          <span class="tag ${r.subject}">${r.subject}</span> ${esc(r.title||'Untitled test')}
+          <div class="mini" style="margin-top:2px;">${new Date(r.date).toLocaleDateString()}${r.timeTakenSecs!=null && r.expectedMinutes? ` · took ${Math.round(r.timeTakenSecs/60)}m (expected ~${r.expectedMinutes}m)`:''}</div>
+        </div>
+        <span class="score-pill ${scoreLabel(pct??0)}" style="flex:0 0 auto;">${r.score}/${r.maxScore}</span>
+      </div>`));
+    });
+    testCard.lastChild.style.borderBottom='none';
+    app.appendChild(testCard);
+  }
 
   // By topic — weakest first, combines standalone questions AND questions inside completed tests
   const topicStats = {};
