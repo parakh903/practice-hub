@@ -311,13 +311,30 @@ function buildAddChildControl(style){
 function blankQForm(){
   return {subject:'Maths', topic:'', difficulty:'Extension', type:'mcq',
     prompt:'', options:['','','',''], correctIndex:0, correctAnswer:'', solution:'',
-    timeMinutes:2, marks:1};
+    timeMinutes:2, marks:1, editId:null, createdAt:null, diagramSvg:'', imageUrl:''};
 }
 let qForm = blankQForm();
 
+function startEditQuestion(q){
+  qForm = {
+    subject:q.subject, topic:q.topic||'', difficulty:q.difficulty, type:q.type,
+    prompt:q.prompt, options: q.options? [...q.options,'','','',''].slice(0,4) : ['','','',''],
+    correctIndex: q.correctIndex??0, correctAnswer:q.correctAnswer||'', solution:q.solution||'',
+    timeMinutes:q.timeMinutes||2, marks:q.marks||1,
+    editId:q.id, createdAt:q.createdAt||Date.now(), diagramSvg:q.diagramSvg||'', imageUrl:q.imageUrl||''
+  };
+  state.qFormError='';
+  render();
+  const formEl=document.getElementById('qf-prompt');
+  if(formEl) formEl.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function cancelEditQuestion(){ qForm=blankQForm(); state.qFormError=''; render(); }
+
 function renderQForm(){
+  const editing = !!qForm.editId;
   return `
-  <div class="card">
+  <div class="card" style="${editing?'border-left:5px solid var(--english);':''}">
+    ${editing?`<div class="mini" style="margin-bottom:10px;color:var(--english);font-weight:600;">EDITING EXISTING QUESTION</div>`:''}
     <label class="field">Subject</label>
     <div class="row">
       <select id="qf-subject">${SUBJECTS.map(s=>`<option ${qForm.subject===s?'selected':''}>${s}</option>`).join('')}</select>
@@ -346,7 +363,8 @@ function renderQForm(){
     <label class="field">Full worked solution / marking guide (shown after the child answers)</label>
     <textarea id="qf-solution">${esc(qForm.solution)}</textarea>
     <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
-      <button class="btn" id="qf-save">Add question to bank</button>
+      <button class="btn" id="qf-save">${editing?'Save changes':'Add question to bank'}</button>
+      ${editing?`<button class="btn secondary" id="qf-cancel" type="button">Cancel</button>`:''}
       ${state.qFormError?`<span class="mini" style="color:var(--bad);">${esc(state.qFormError)}</span>`:''}
     </div>
   </div>`;
@@ -393,9 +411,12 @@ async function saveQuestion(){
   qForm.marks=+document.getElementById('qf-marks').value || 1;
   state.qFormError='';
   if(!qForm.prompt.trim()){ state.qFormError='Add a question prompt first.'; render(); return; }
-  const q={id:uid(), subject:qForm.subject, difficulty:qForm.difficulty, type:qForm.type,
-    topic:qForm.topic, prompt:qForm.prompt, solution:qForm.solution, createdAt:Date.now(),
+  const isEdit = !!qForm.editId;
+  const q={id: isEdit? qForm.editId : uid(), subject:qForm.subject, difficulty:qForm.difficulty, type:qForm.type,
+    topic:qForm.topic, prompt:qForm.prompt, solution:qForm.solution, createdAt: isEdit? qForm.createdAt : Date.now(),
     timeMinutes:qForm.timeMinutes, marks:qForm.marks};
+  if(qForm.diagramSvg) q.diagramSvg=qForm.diagramSvg;
+  if(qForm.imageUrl) q.imageUrl=qForm.imageUrl;
   if(qForm.type==='mcq'){
     if(qForm.options.some(o=>!o.trim())){ state.qFormError='Fill in all 4 options.'; render(); return; }
     q.options=[...qForm.options]; q.correctIndex=qForm.correctIndex;
@@ -414,9 +435,13 @@ async function bulkImport(){
   try{ items = JSON.parse(state.bulkText); }
   catch(e){ state.bulkMsg='Could not read that — check it\'s valid JSON (starts with [ and ends with ]).'; render(); return; }
   if(!Array.isArray(items) || items.length===0){ state.bulkMsg='Expected a list of questions in [ ] brackets.'; render(); return; }
-  let added=0, skipped=0;
+  const normalize = p => (p||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const existingSigs = new Set(state.qbank.map(q => q.subject+'|'+normalize(q.prompt)));
+  let added=0, skipped=0, duplicates=0;
   for(const raw of items){
     if(!raw || !SUBJECTS.includes(raw.subject) || !raw.prompt || !raw.type){ skipped++; continue; }
+    const sig = raw.subject+'|'+normalize(raw.prompt);
+    if(existingSigs.has(sig)){ duplicates++; continue; }
     const q={id:uid(), subject:raw.subject, difficulty:DIFFS.includes(raw.difficulty)?raw.difficulty:'Extension',
       type:raw.type, topic:raw.topic||'', prompt:raw.prompt, solution:raw.solution||'', createdAt:Date.now()+added,
       timeMinutes: (typeof raw.timeMinutes==='number' && raw.timeMinutes>0) ? raw.timeMinutes : 2,
@@ -431,11 +456,16 @@ async function bulkImport(){
       q.correctAnswer=String(raw.correctAnswer);
     } else if(raw.type!=='short'){ skipped++; continue; }
     await db.collection('qbank').doc(q.id).set(q);
+    existingSigs.add(sig);
     added++;
   }
   state.bulkText='';
-  state.bulkMsg = added>0 ? `Added ${added} question${added===1?'':'s'}${skipped?` (skipped ${skipped} that didn't match the format)`:''}.`
-                          : `Nothing was added — ${skipped} item(s) didn't match the expected format.`;
+  const notes=[];
+  if(duplicates) notes.push(`${duplicates} duplicate${duplicates===1?'':'s'} skipped`);
+  if(skipped) notes.push(`${skipped} invalid item${skipped===1?'':'s'} skipped`);
+  state.bulkMsg = added>0
+    ? `Added ${added} question${added===1?'':'s'}${notes.length?` (${notes.join(', ')})`:''}.`
+    : `Nothing was added${notes.length?` — ${notes.join(', ')}`:''}.`;
   render();
 }
 
@@ -556,6 +586,7 @@ function renderManage(){
   qf.querySelector('#qf-difficulty').addEventListener('change', e=>{ qForm.difficulty=e.target.value; });
   qf.querySelector('#qf-type').addEventListener('change', e=>{ qForm.type=e.target.value; renderQTypeFields(typeFieldsContainer); });
   qf.querySelector('#qf-save').addEventListener('click', saveQuestion);
+  if(qf.querySelector('#qf-cancel')) qf.querySelector('#qf-cancel').addEventListener('click', cancelEditQuestion);
 
   wrap.appendChild(el(`<h2 class="section-title">Question bank (${state.qbank.length})</h2>`));
   if(state.qbank.length===0){
@@ -578,10 +609,12 @@ function renderManage(){
         const allDone = doneByAllChildren(q.id);
         const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;${allDone?'opacity:0.6;':''}">
           <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
+          <span class="close-x" data-edit="${q.id}" style="right:70px;color:var(--maths);">edit</span>
           <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span><span class="tag diff">added ${formatDate(q.createdAt)}</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}
           <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
         </div>`);
-        card.querySelector('.close-x').addEventListener('click', ()=>deleteQuestion(q.id));
+        card.querySelector('.close-x[data-id]').addEventListener('click', ()=>deleteQuestion(q.id));
+        card.querySelector('.close-x[data-edit]').addEventListener('click', ()=>startEditQuestion(q));
         wrap.appendChild(card);
       });
     });
@@ -925,6 +958,16 @@ async function finalizeTestSelfMarks(){
 
 // ---------- RESULTS TAB ----------
 let expandedResult=null;
+function pctOf(r){
+  const m=r.marks||1;
+  if(r.type==='question'){
+    let earned = r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??null);
+    return earned===null ? null : (m? earned/m*100 : 0);
+  } else {
+    return r.maxScore ? (r.score/r.maxScore*100) : null;
+  }
+}
+
 function renderResults(){
   const app=document.getElementById('app');
   if(!state.currentChild){
@@ -936,10 +979,75 @@ function renderResults(){
   }
   const allList=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
   app.appendChild(el(`<h2 class="section-title">Results for ${esc(state.children.find(c=>c.id===state.currentChild)?.name||'')}</h2>`));
+
+  // Weekly summary
+  const weekAgo = Date.now() - 7*86400000;
+  const weekAttempts = allList.filter(r=>r.date>=weekAgo);
+  const weekQ = weekAttempts.filter(r=>r.type==='question').length;
+  const weekT = weekAttempts.filter(r=>r.type==='test').length;
+  const weekPcts = weekAttempts.map(pctOf).filter(p=>p!==null);
+  const weekAvg = weekPcts.length ? Math.round(weekPcts.reduce((a,b)=>a+b,0)/weekPcts.length) : null;
+  app.appendChild(el(`<div class="card" style="padding:12px 16px;margin-bottom:16px;">
+    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">This week</div>
+    <div style="font-size:0.95rem;">${weekQ} question${weekQ===1?'':'s'} · ${weekT} test${weekT===1?'':'s'}${weekAvg!==null?` · avg ${weekAvg}%`:''}</div>
+  </div>`));
+
+  // Per-subject trend (last 10 attempts each, ignores subject filter chip on purpose)
+  const trendRow=el(`<div class="row" style="margin-bottom:16px;"></div>`);
+  SUBJECTS.forEach(subj=>{
+    const attempts = allList.filter(r=>r.subject===subj && pctOf(r)!==null).slice(0,10); // already date-desc sorted
+    const box=el(`<div class="card subj-${subj}" style="padding:12px 14px;"></div>`);
+    if(attempts.length===0){
+      box.innerHTML = `<span class="tag ${subj}">${subj}</span><div class="mini" style="margin-top:6px;">No attempts yet</div>`;
+    } else {
+      const avg = Math.round(attempts.reduce((s,r)=>s+pctOf(r),0)/attempts.length);
+      let trendLabel='', trendColor='var(--ink-soft)';
+      if(attempts.length>=4){
+        const half=Math.floor(attempts.length/2);
+        const recentAvg = attempts.slice(0,half).reduce((s,r)=>s+pctOf(r),0)/half;
+        const olderAvg = attempts.slice(half).reduce((s,r)=>s+pctOf(r),0)/(attempts.length-half);
+        const diff=recentAvg-olderAvg;
+        if(diff>5){ trendLabel='▲ improving'; trendColor='var(--good)'; }
+        else if(diff<-5){ trendLabel='▼ dipping'; trendColor='var(--bad)'; }
+        else { trendLabel='— steady'; }
+      }
+      box.innerHTML = `<span class="tag ${subj}">${subj}</span>
+        <div style="font-size:1.3rem;font-family:var(--font-mono);font-weight:600;margin-top:6px;">${avg}%</div>
+        <div class="mini">last ${attempts.length} attempt${attempts.length===1?'':'s'}${trendLabel?` · <span style="color:${trendColor};">${trendLabel}</span>`:''}</div>`;
+    }
+    trendRow.appendChild(box);
+  });
+  app.appendChild(trendRow);
+
   app.appendChild(renderSubjectFilter());
 
   const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
   const list = allList.filter(r=>passesFilter(r.subject));
+
+  // By topic — weakest first, adhoc questions only (topics aren't tracked per-question inside tests)
+  const topicStats = {};
+  list.filter(r=>r.type==='question' && r.topic).forEach(r=>{
+    const p = pctOf(r);
+    if(p===null) return;
+    const key=r.topic;
+    if(!topicStats[key]) topicStats[key]={earned:0,total:0,subject:r.subject};
+    const m=r.marks||1;
+    const earned = r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0);
+    topicStats[key].earned+=earned; topicStats[key].total+=m;
+  });
+  const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
+  if(topicRows.length){
+    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">By topic (weakest first)</div>`));
+    const topicCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
+    topicRows.forEach(t=>{
+      topicCard.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);">
+        <div><span class="tag ${t.subject}">${t.subject}</span> ${esc(t.topic)}</div>
+        <span class="score-pill ${scoreLabel(t.pct)}">${t.earned}/${t.total}</span>
+      </div>`));
+    });
+    topicCard.lastChild.style.borderBottom='none';
+    app.appendChild(topicCard);
+  }
 
   // Still to do — items with no attempt yet by this child, combined & sorted oldest-posted-first
   const attemptedTestIds = new Set(allList.filter(r=>r.type==='test').map(r=>r.refId));
