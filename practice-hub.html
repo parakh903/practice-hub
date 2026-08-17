@@ -257,6 +257,10 @@ function initListeners(){
 
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; }
 function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function formatDate(ts){
+  if(!ts) return '';
+  return new Date(ts).toLocaleDateString(undefined, {day:'numeric', month:'short'});
+}
 
 function setTab(t){ state.tab=t; state.activeAttempt=null; setRememberedTab(t); render(); }
 
@@ -563,7 +567,7 @@ function renderManage(){
         const allDone = doneByAllChildren(q.id);
         const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;${allDone?'opacity:0.6;':''}">
           <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
-          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}
+          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span><span class="tag diff">added ${formatDate(q.createdAt)}</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}
           <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
         </div>`);
         card.querySelector('.close-x').addEventListener('click', ()=>deleteQuestion(q.id));
@@ -597,7 +601,7 @@ function renderManage(){
         <span class="close-x" data-id="${t.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
         <span class="tag ${t.subject}">${t.subject}</span>
         <strong>${esc(t.title)}</strong>
-        <div class="mini" style="margin-top:4px;">${t.questionIds.length} questions · ${t.timeLimitMins} min</div>
+        <div class="mini" style="margin-top:4px;">${t.questionIds.length} questions · ${t.timeLimitMins} min · added ${formatDate(t.createdAt)}</div>
       </div>`);
       card.querySelector('.close-x').addEventListener('click', ()=>deleteTest(t.id));
       wrap.appendChild(card);
@@ -643,7 +647,7 @@ function renderPractice(){
         ${done?`<span class="score-pill ${scoreLabel(done.maxScore? done.score/done.maxScore*100:0)}" style="position:absolute;top:16px;right:16px;">Done · ${done.score}/${done.maxScore}</span>`:''}
         <span class="tag ${t.subject}">${t.subject}</span>
         <strong style="font-family:var(--font-display);font-size:1.05rem;">${esc(t.title)}</strong>
-        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks${done?` · took ${Math.round(done.timeTakenSecs/60)} min`:''}</div>
+        <div class="mini" style="margin:6px 0 12px;">${t.questionIds.length} questions · ${t.timeLimitMins} minutes · ${sumMarks(new Set(t.questionIds))} marks · posted ${formatDate(t.createdAt)}${done?` · took ${Math.round(done.timeTakenSecs/60)} min`:''}</div>
         <button class="btn">${done?'Retake test':'Start test'}</button>
       </div>`);
       card.querySelector('button').addEventListener('click', ()=>startTest(t));
@@ -675,7 +679,7 @@ function renderPractice(){
       }
       const card=el(`<div class="card subj-${q.subject}" style="position:relative;${done?'opacity:0.75;':''}">
         ${doneBadge}
-        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk${timeNote}</span>
+        <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk${timeNote}</span><span class="tag diff">posted ${formatDate(q.createdAt)}</span>
         <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
         <button class="btn secondary">${done?'Answer again':'Answer this'}</button>
       </div>`);
