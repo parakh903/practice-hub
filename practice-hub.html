@@ -584,6 +584,31 @@ function renderManage(){
   });
   wrap.appendChild(stockRow);
 
+  // Per-child breakdown — catches the case where one child races ahead of the other
+  // and runs out individually, even while the shared "fresh" count above still looks fine.
+  if(state.children.length>0){
+    const childLowRow=el(`<div class="row" style="margin-bottom:20px;"></div>`);
+    state.children.forEach(c=>{
+      const myResults = state.results[c.id]||[];
+      const answeredQIds = new Set(myResults.filter(r=>r.type==='question').map(r=>r.refId));
+      const answeredTIds = new Set(myResults.filter(r=>r.type==='test').map(r=>r.refId));
+      const lines = SUBJECTS.map(subj=>{
+        const remainingQ = state.qbank.filter(q=>q.subject===subj && !answeredQIds.has(q.id)).length;
+        const low = remainingQ<=LOW_Q;
+        return `<div style="display:flex;justify-content:space-between;padding:3px 0;">
+          <span class="tag ${subj}">${subj}</span>
+          <span style="color:${low?'var(--bad)':'var(--ink-soft)'};font-weight:${low?'600':'400'};font-size:0.85rem;">${remainingQ} left${low?' ⚠':''}</span>
+        </div>`;
+      }).join('');
+      childLowRow.appendChild(el(`<div class="card" style="padding:12px 14px;">
+        <strong style="font-size:0.95rem;">${esc(c.name)}</strong>
+        <div style="margin-top:6px;">${lines}</div>
+      </div>`));
+    });
+    wrap.appendChild(el(`<div class="mini" style="margin:-10px 0 10px;">Per-child: how many unanswered questions each child has left in each subject.</div>`));
+    wrap.appendChild(childLowRow);
+  }
+
   wrap.appendChild(el(`<h2 class="section-title">Children</h2>`));
   const kids=el(`<div class="row" style="margin-bottom:20px;"></div>`);
   state.children.forEach(c=>{
