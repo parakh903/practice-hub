@@ -6,6 +6,7 @@
 <title>Practice Hub</title>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
@@ -171,6 +172,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
 const loadedFlags = {children:false, qbank:false, tests:false, results:false};
 function markLoaded(key){
   loadedFlags[key]=true;
@@ -1212,7 +1214,17 @@ function render(){
   else if(state.tab==='manage') renderManage();
 }
 
-initListeners();
+let listenersStarted=false;
+auth.onAuthStateChanged(user=>{
+  if(user && !listenersStarted){
+    listenersStarted=true;
+    initListeners();
+  }
+});
+auth.signInAnonymously().catch(err=>{
+  console.error('Anonymous sign-in failed', err);
+  render(); // still render the (empty/loading) shell so the page isn't blank on failure
+});
 </script>
 </body>
 </html>
