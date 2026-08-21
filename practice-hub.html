@@ -153,6 +153,13 @@ tr.result-row:hover{background:rgba(30,42,56,0.03);}
 .detail-panel{background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px 16px;margin-top:8px;}
 .mini{font-size:0.8rem;color:var(--ink-soft);}
 .close-x{position:absolute;top:14px;right:16px;cursor:pointer;color:var(--ink-soft);font-family:var(--font-mono);font-size:0.8rem;}
+#print-sheet{display:none;}
+@media print{
+  #app > *{display:none !important;}
+  #print-sheet{display:block !important;}
+  #print-sheet *{display:revert !important;}
+  body{background:#fff;}
+}
 </style>
 </head>
 <body>
@@ -492,6 +499,8 @@ function startEditReferenceNote(n){
   refForm = {subject:n.subject, topic:n.topic||'', title:n.title, content:n.content, tags:n.tags||'',
     diagramSvg:n.diagramSvg||'', editId:n.id, createdAt:n.createdAt||Date.now()};
   render();
+  const formEl=document.getElementById('rf-title');
+  if(formEl) formEl.scrollIntoView({behavior:'smooth', block:'center'});
 }
 function cancelEditReferenceNote(){ refForm=blankRefForm(); render(); }
 
@@ -547,6 +556,19 @@ async function bulkImportReference(){
     ? `Added ${added} note${added===1?'':'s'}${notes.length?` (${notes.join(', ')})`:''}.`
     : `Nothing was added${notes.length?` — ${notes.join(', ')}`:''}.`;
   render();
+}
+
+async function clearAllReferenceNotes(){
+  if(state.pendingDelete && state.pendingDelete.type==='clearAllReference'){
+    state.pendingDelete=null;
+    render();
+    const batch = db.batch();
+    state.reference.forEach(n=>batch.delete(db.collection('reference').doc(n.id)));
+    await batch.commit();
+  } else {
+    state.pendingDelete={type:'clearAllReference', id:null};
+    render();
+  }
 }
 
 async function deleteQuestion(id){
@@ -798,6 +820,8 @@ function renderManage(){
     <textarea id="rf-content" style="min-height:100px;">${esc(refForm.content)}</textarea>
     <label class="field">Tags (optional, comma-separated, helps search)</label>
     <input type="text" id="rf-tags" value="${esc(refForm.tags)}" placeholder="e.g. powers, exponent rules">
+    <label class="field">Diagram (optional — paste SVG code if Claude gave you one)</label>
+    <textarea id="rf-diagram" style="min-height:60px;font-family:var(--font-mono);font-size:0.78rem;" placeholder="<svg ...>...</svg>">${esc(refForm.diagramSvg)}</textarea>
     <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
       <button class="btn" id="rf-save">${refEditing?'Save changes':'Add note'}</button>
       ${refEditing?`<button class="btn secondary" id="rf-cancel">Cancel</button>`:''}
@@ -809,6 +833,7 @@ function renderManage(){
   refCard.querySelector('#rf-title').addEventListener('input', e=>{ refForm.title=e.target.value; });
   refCard.querySelector('#rf-content').addEventListener('input', e=>{ refForm.content=e.target.value; });
   refCard.querySelector('#rf-tags').addEventListener('input', e=>{ refForm.tags=e.target.value; });
+  refCard.querySelector('#rf-diagram').addEventListener('input', e=>{ refForm.diagramSvg=e.target.value; });
   refCard.querySelector('#rf-save').addEventListener('click', saveReferenceNote);
   if(refCard.querySelector('#rf-cancel')) refCard.querySelector('#rf-cancel').addEventListener('click', cancelEditReferenceNote);
   wrap.appendChild(refCard);
@@ -825,7 +850,13 @@ function renderManage(){
   refBulkCard.querySelector('#rf-bulk-btn').addEventListener('click', bulkImportReference);
   wrap.appendChild(refBulkCard);
 
-  wrap.appendChild(el(`<h2 class="section-title">Existing notes (${state.reference.length})</h2>`));
+  const clearPending = state.pendingDelete && state.pendingDelete.type==='clearAllReference';
+  const headerRow=el(`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+    <h2 class="section-title" style="margin:0;border:none;padding:0;flex:1;">Existing notes (${state.reference.length})</h2>
+    ${state.reference.length>0?`<button class="btn ${clearPending?'danger':'secondary'}" id="rf-clear-all" style="flex:0 0 auto;">${clearPending?'Confirm clear ALL notes?':'Clear all'}</button>`:''}
+  </div>`);
+  if(headerRow.querySelector('#rf-clear-all')) headerRow.querySelector('#rf-clear-all').addEventListener('click', clearAllReferenceNotes);
+  wrap.appendChild(headerRow);
   if(state.reference.length===0){
     wrap.appendChild(el(`<div class="empty">No reference notes yet.</div>`));
   } else {
@@ -1160,6 +1191,11 @@ let expandedRef=null;
 function renderReference(){
   const app=document.getElementById('app');
   app.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet</h2>`));
+
+  const pdfBtn=el(`<button class="btn secondary" style="margin-bottom:16px;">Save as PDF</button>`);
+  pdfBtn.addEventListener('click', ()=>window.print());
+  app.appendChild(pdfBtn);
+
   app.appendChild(renderSubjectFilter());
 
   const searchWrap=el(`<div style="margin-bottom:16px;"></div>`);
@@ -1169,6 +1205,38 @@ function renderReference(){
 
   const resultsContainer=el(`<div></div>`);
   app.appendChild(resultsContainer);
+
+  // Hidden print-only view: the FULL library, all subjects/topics, fully expanded —
+  // regardless of whatever filter/search is currently on screen — so the PDF is a
+  // complete offline copy, not just whatever happened to be visible when you clicked.
+  const printSheet=el(`<div id="print-sheet"></div>`);
+  printSheet.appendChild(el(`<h1 style="font-family:var(--font-display);">Practice Hub — Reference &amp; Cheat Sheet</h1>`));
+  const printBySubject={};
+  state.reference.forEach(n=>{
+    if(!printBySubject[n.subject]) printBySubject[n.subject]={};
+    const topic=n.topic||'General';
+    if(!printBySubject[n.subject][topic]) printBySubject[n.subject][topic]=[];
+    printBySubject[n.subject][topic].push(n);
+  });
+  SUBJECTS.forEach(subj=>{
+    if(!printBySubject[subj]) return;
+    printSheet.appendChild(el(`<h2 style="font-family:var(--font-display);margin-top:24px;border-bottom:2px solid #000;padding-bottom:4px;">${subj}</h2>`));
+    Object.keys(printBySubject[subj]).sort().forEach(topic=>{
+      printSheet.appendChild(el(`<h3 style="margin-top:14px;margin-bottom:6px;">${esc(topic)}</h3>`));
+      printBySubject[subj][topic].forEach(n=>{
+        const item=el(`<div style="margin-bottom:10px;page-break-inside:avoid;"></div>`);
+        item.appendChild(el(`<div style="font-weight:600;font-size:0.95rem;">${esc(n.title)}</div>`));
+        item.appendChild(el(`<div style="white-space:pre-wrap;font-size:0.88rem;margin-top:2px;">${esc(n.content)}</div>`));
+        if(n.diagramSvg){
+          const dwrap=el(`<div style="margin-top:6px;max-width:280px;"></div>`);
+          dwrap.innerHTML = n.diagramSvg;
+          item.appendChild(dwrap);
+        }
+        printSheet.appendChild(item);
+      });
+    });
+  });
+  app.appendChild(printSheet);
 
   function renderResultsInto(container){
     container.innerHTML='';
