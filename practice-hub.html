@@ -1164,59 +1164,67 @@ function renderReference(){
 
   const searchWrap=el(`<div style="margin-bottom:16px;"></div>`);
   const searchInput=el(`<input type="text" placeholder="Search formulas, tricks, techniques…" value="${esc(state.refSearch)}">`);
-  searchInput.addEventListener('input', e=>{ state.refSearch=e.target.value; render(); });
   searchWrap.appendChild(searchInput);
   app.appendChild(searchWrap);
 
-  const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
-  const q = state.refSearch.trim().toLowerCase();
-  const matches = state.reference.filter(n=>{
-    if(!passesFilter(n.subject)) return false;
-    if(!q) return true;
-    const hay = [n.title, n.topic, n.content, n.tags].filter(Boolean).join(' ').toLowerCase();
-    return hay.includes(q);
-  });
+  const resultsContainer=el(`<div></div>`);
+  app.appendChild(resultsContainer);
 
-  if(state.reference.length===0){
-    app.appendChild(el(`<div class="empty">No reference notes added yet — add formulas, tricks, or technique summaries from the Manage tab.</div>`));
-    return;
-  }
-  if(matches.length===0){
-    app.appendChild(el(`<div class="empty">Nothing matches that search.</div>`));
-    return;
-  }
+  function renderResultsInto(container){
+    container.innerHTML='';
+    const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
+    const q = state.refSearch.trim().toLowerCase();
+    const matches = state.reference.filter(n=>{
+      if(!passesFilter(n.subject)) return false;
+      if(!q) return true;
+      const hay = [n.title, n.topic, n.content, n.tags].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
 
-  // group by subject then topic, in that order
-  const bySubject={};
-  matches.forEach(n=>{
-    if(!bySubject[n.subject]) bySubject[n.subject]={};
-    const topic=n.topic||'General';
-    if(!bySubject[n.subject][topic]) bySubject[n.subject][topic]=[];
-    bySubject[n.subject][topic].push(n);
-  });
+    if(state.reference.length===0){
+      container.appendChild(el(`<div class="empty">No reference notes added yet — add formulas, tricks, or technique summaries from the Manage tab.</div>`));
+      return;
+    }
+    if(matches.length===0){
+      container.appendChild(el(`<div class="empty">Nothing matches that search.</div>`));
+      return;
+    }
 
-  SUBJECTS.forEach(subj=>{
-    if(!bySubject[subj]) return;
-    app.appendChild(el(`<div class="mini" style="margin:16px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj}</div>`));
-    Object.keys(bySubject[subj]).sort().forEach(topic=>{
-      app.appendChild(el(`<div class="mini" style="margin:8px 0 6px;font-weight:600;">${esc(topic)}</div>`));
-      bySubject[subj][topic].forEach(n=>{
-        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;cursor:pointer;"></div>`);
-        card.appendChild(el(`<div style="font-size:0.95rem;font-weight:500;">${esc(n.title)}</div>`));
-        if(expandedRef===n.id){
-          const body=el(`<div class="q-prompt" style="margin-top:8px;font-size:0.9rem;">${esc(n.content)}</div>`);
-          card.appendChild(body);
-          if(n.diagramSvg){
-            const dwrap=el(`<div style="background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px;margin-top:8px;display:flex;justify-content:center;"></div>`);
-            dwrap.innerHTML = n.diagramSvg;
-            card.appendChild(dwrap);
+    // group by subject then topic, in that order
+    const bySubject={};
+    matches.forEach(n=>{
+      if(!bySubject[n.subject]) bySubject[n.subject]={};
+      const topic=n.topic||'General';
+      if(!bySubject[n.subject][topic]) bySubject[n.subject][topic]=[];
+      bySubject[n.subject][topic].push(n);
+    });
+
+    SUBJECTS.forEach(subj=>{
+      if(!bySubject[subj]) return;
+      container.appendChild(el(`<div class="mini" style="margin:16px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj}</div>`));
+      Object.keys(bySubject[subj]).sort().forEach(topic=>{
+        container.appendChild(el(`<div class="mini" style="margin:8px 0 6px;font-weight:600;">${esc(topic)}</div>`));
+        bySubject[subj][topic].forEach(n=>{
+          const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;cursor:pointer;"></div>`);
+          card.appendChild(el(`<div style="font-size:0.95rem;font-weight:500;">${esc(n.title)}</div>`));
+          if(expandedRef===n.id){
+            const body=el(`<div class="q-prompt" style="margin-top:8px;font-size:0.9rem;">${esc(n.content)}</div>`);
+            card.appendChild(body);
+            if(n.diagramSvg){
+              const dwrap=el(`<div style="background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px;margin-top:8px;display:flex;justify-content:center;"></div>`);
+              dwrap.innerHTML = n.diagramSvg;
+              card.appendChild(dwrap);
+            }
           }
-        }
-        card.addEventListener('click', ()=>{ expandedRef = expandedRef===n.id? null : n.id; render(); });
-        app.appendChild(card);
+          card.addEventListener('click', ()=>{ expandedRef = expandedRef===n.id? null : n.id; renderResultsInto(resultsContainer); });
+          container.appendChild(card);
+        });
       });
     });
-  });
+  }
+
+  searchInput.addEventListener('input', e=>{ state.refSearch=e.target.value; renderResultsInto(resultsContainer); });
+  renderResultsInto(resultsContainer);
 }
 
 function pctOf(r){
