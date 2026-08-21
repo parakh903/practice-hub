@@ -709,6 +709,30 @@ function renderManage(){
     wrap.appendChild(childLowRow);
   }
 
+  const exportCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
+    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Export everything</div>
+    <div class="mini" style="margin-bottom:10px;">Downloads all questions, tests, and reference notes as one JSON file — handy for giving a new Claude chat full context on what's already in the bank.</div>
+    <button class="btn secondary" id="export-all-btn">Download data export</button>
+  </div>`);
+  exportCard.querySelector('#export-all-btn').addEventListener('click', ()=>{
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      questions: state.qbank,
+      tests: state.tests,
+      reference: state.reference
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `practice-hub-export-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+  wrap.appendChild(exportCard);
+
   wrap.appendChild(el(`<h2 class="section-title">Children</h2>`));
   const kids=el(`<div class="row" style="margin-bottom:20px;"></div>`);
   state.children.forEach(c=>{
