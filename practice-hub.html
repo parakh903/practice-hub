@@ -173,7 +173,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
-const loadedFlags = {children:false, qbank:false, tests:false, results:false};
+const loadedFlags = {children:false, qbank:false, tests:false, results:false, reference:false};
 function markLoaded(key){
   loadedFlags[key]=true;
   if(Object.values(loadedFlags).every(Boolean)) state.loaded=true;
@@ -187,21 +187,26 @@ function setRememberedTab(t){
 }
 
 let state={
-  tab: (getRememberedTab() && ['practice','results','manage'].includes(getRememberedTab())) ? getRememberedTab() : 'practice',
+  tab: (getRememberedTab() && ['practice','results','manage','reference'].includes(getRememberedTab())) ? getRememberedTab() : 'practice',
   currentChild:null,
   children:[],
   qbank:[],
   tests:[],
   results:{}, // childId -> array
+  reference:[], // reference/cheat-sheet notes
   activeAttempt:null, // {type:'question'|'test', ...runtime}
   loaded:false,
   addingChild:false,
-  pendingDelete:null, // {type:'question'|'test', id}
+  pendingDelete:null, // {type:'question'|'test'|'reference', id}
   qFormError:'',
   tfFormError:'',
   bulkText:'',
   bulkMsg:'',
-  subjectFilter:'All'
+  subjectFilter:'All',
+  refSearch:'',
+  refBulkText:'',
+  refBulkMsg:'',
+  refFormError:''
 };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -243,6 +248,12 @@ function initListeners(){
     markLoaded('tests');
     render();
   }, err=>console.error('tests listener error', err));
+
+  db.collection('reference').onSnapshot(snap=>{
+    state.reference = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+    markLoaded('reference');
+    render();
+  }, err=>console.error('reference listener error', err));
 
   db.collection('results').onSnapshot(snap=>{
     const grouped={};
@@ -467,6 +478,73 @@ async function bulkImport(){
   if(skipped) notes.push(`${skipped} invalid item${skipped===1?'':'s'} skipped`);
   state.bulkMsg = added>0
     ? `Added ${added} question${added===1?'':'s'}${notes.length?` (${notes.join(', ')})`:''}.`
+    : `Nothing was added${notes.length?` — ${notes.join(', ')}`:''}.`;
+  render();
+}
+
+// ---------- REFERENCE / CHEAT SHEET NOTES ----------
+function blankRefForm(){
+  return {subject:'Maths', topic:'', title:'', content:'', tags:'', diagramSvg:'', editId:null, createdAt:null};
+}
+let refForm = blankRefForm();
+
+function startEditReferenceNote(n){
+  refForm = {subject:n.subject, topic:n.topic||'', title:n.title, content:n.content, tags:n.tags||'',
+    diagramSvg:n.diagramSvg||'', editId:n.id, createdAt:n.createdAt||Date.now()};
+  render();
+}
+function cancelEditReferenceNote(){ refForm=blankRefForm(); render(); }
+
+async function saveReferenceNote(){
+  if(!refForm.title.trim() || !refForm.content.trim()){ state.refFormError='Add both a title and the content.'; render(); return; }
+  state.refFormError='';
+  const isEdit = !!refForm.editId;
+  const n = {id: isEdit? refForm.editId : uid(), subject:refForm.subject, topic:refForm.topic,
+    title:refForm.title, content:refForm.content, tags:refForm.tags,
+    createdAt: isEdit? refForm.createdAt : Date.now()};
+  if(refForm.diagramSvg) n.diagramSvg = refForm.diagramSvg;
+  refForm = blankRefForm();
+  render();
+  await db.collection('reference').doc(n.id).set(n);
+}
+
+async function deleteReferenceNote(id){
+  if(!(state.pendingDelete && state.pendingDelete.type==='reference' && state.pendingDelete.id===id)){
+    state.pendingDelete={type:'reference', id};
+    render();
+    return;
+  }
+  state.pendingDelete=null;
+  render();
+  await db.collection('reference').doc(id).delete();
+}
+
+async function bulkImportReference(){
+  state.refBulkMsg='';
+  let items;
+  try{ items = JSON.parse(state.refBulkText); }
+  catch(e){ state.refBulkMsg='Could not read that — check it\'s valid JSON (starts with [ and ends with ]).'; render(); return; }
+  if(!Array.isArray(items) || items.length===0){ state.refBulkMsg='Expected a list in [ ] brackets.'; render(); return; }
+  const normalize = s => (s||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const existingSigs = new Set(state.reference.map(n => n.subject+'|'+normalize(n.title)));
+  let added=0, skipped=0, duplicates=0;
+  for(const raw of items){
+    if(!raw || !SUBJECTS.includes(raw.subject) || !raw.title || !raw.content){ skipped++; continue; }
+    const sig = raw.subject+'|'+normalize(raw.title);
+    if(existingSigs.has(sig)){ duplicates++; continue; }
+    const n={id:uid(), subject:raw.subject, topic:raw.topic||'', title:raw.title, content:raw.content,
+      tags:raw.tags||'', createdAt:Date.now()+added};
+    if(raw.diagramSvg) n.diagramSvg=raw.diagramSvg;
+    await db.collection('reference').doc(n.id).set(n);
+    existingSigs.add(sig);
+    added++;
+  }
+  state.refBulkText='';
+  const notes=[];
+  if(duplicates) notes.push(`${duplicates} duplicate${duplicates===1?'':'s'} skipped`);
+  if(skipped) notes.push(`${skipped} invalid item${skipped===1?'':'s'} skipped`);
+  state.refBulkMsg = added>0
+    ? `Added ${added} note${added===1?'':'s'}${notes.length?` (${notes.join(', ')})`:''}.`
     : `Nothing was added${notes.length?` — ${notes.join(', ')}`:''}.`;
   render();
 }
@@ -704,6 +782,73 @@ function renderManage(){
       wrap.appendChild(card);
     });
   }
+
+  // ---- Reference / cheat sheet notes ----
+  wrap.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet notes</h2>`));
+  const refEditing = !!refForm.editId;
+  const refCard=el(`<div class="card" style="${refEditing?'border-left:5px solid var(--english);':''}">
+    ${refEditing?`<div class="mini" style="margin-bottom:10px;color:var(--english);font-weight:600;">EDITING EXISTING NOTE</div>`:''}
+    <div class="row">
+      <select id="rf-subject">${SUBJECTS.map(s=>`<option ${refForm.subject===s?'selected':''}>${s}</option>`).join('')}</select>
+      <input type="text" id="rf-topic" placeholder="Topic (e.g. Indices)" value="${esc(refForm.topic)}">
+    </div>
+    <label class="field">Title (e.g. "Law of exponents: multiplying powers")</label>
+    <input type="text" id="rf-title" value="${esc(refForm.title)}">
+    <label class="field">Content (the formula, trick, or technique — write it out fully)</label>
+    <textarea id="rf-content" style="min-height:100px;">${esc(refForm.content)}</textarea>
+    <label class="field">Tags (optional, comma-separated, helps search)</label>
+    <input type="text" id="rf-tags" value="${esc(refForm.tags)}" placeholder="e.g. powers, exponent rules">
+    <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
+      <button class="btn" id="rf-save">${refEditing?'Save changes':'Add note'}</button>
+      ${refEditing?`<button class="btn secondary" id="rf-cancel">Cancel</button>`:''}
+      ${state.refFormError?`<span class="mini" style="color:var(--bad);">${esc(state.refFormError)}</span>`:''}
+    </div>
+  </div>`);
+  refCard.querySelector('#rf-subject').addEventListener('change', e=>{ refForm.subject=e.target.value; });
+  refCard.querySelector('#rf-topic').addEventListener('input', e=>{ refForm.topic=e.target.value; });
+  refCard.querySelector('#rf-title').addEventListener('input', e=>{ refForm.title=e.target.value; });
+  refCard.querySelector('#rf-content').addEventListener('input', e=>{ refForm.content=e.target.value; });
+  refCard.querySelector('#rf-tags').addEventListener('input', e=>{ refForm.tags=e.target.value; });
+  refCard.querySelector('#rf-save').addEventListener('click', saveReferenceNote);
+  if(refCard.querySelector('#rf-cancel')) refCard.querySelector('#rf-cancel').addEventListener('click', cancelEditReferenceNote);
+  wrap.appendChild(refCard);
+
+  const refBulkCard=el(`<div class="card">
+    <div class="mini" style="margin-bottom:8px;">Paste a batch of reference notes (ask Claude for a set in this format) to add them all at once.</div>
+    <textarea id="rf-bulk-text" style="min-height:120px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","topic":"Indices","title":"Multiplying powers","content":"a^m × a^n = a^(m+n)","tags":"powers, exponents"}]'>${esc(state.refBulkText)}</textarea>
+    <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
+      <button class="btn" id="rf-bulk-btn">Import all</button>
+      ${state.refBulkMsg?`<span class="mini" style="color:${state.refBulkMsg.startsWith('Added')?'var(--good)':'var(--bad)'};">${esc(state.refBulkMsg)}</span>`:''}
+    </div>
+  </div>`);
+  refBulkCard.querySelector('#rf-bulk-text').addEventListener('input', e=>{ state.refBulkText=e.target.value; });
+  refBulkCard.querySelector('#rf-bulk-btn').addEventListener('click', bulkImportReference);
+  wrap.appendChild(refBulkCard);
+
+  wrap.appendChild(el(`<h2 class="section-title">Existing notes (${state.reference.length})</h2>`));
+  if(state.reference.length===0){
+    wrap.appendChild(el(`<div class="empty">No reference notes yet.</div>`));
+  } else {
+    SUBJECTS.forEach(subj=>{
+      const items=state.reference.filter(n=>n.subject===subj).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      if(!items.length) return;
+      wrap.appendChild(el(`<div class="mini" style="margin:14px 0 6px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj} — ${items.length}</div>`));
+      items.forEach(n=>{
+        const isPending = state.pendingDelete && state.pendingDelete.type==='reference' && state.pendingDelete.id===n.id;
+        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;">
+          <span class="close-x" data-id="${n.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
+          <span class="close-x" data-edit="${n.id}" style="right:70px;color:var(--maths);">edit</span>
+          <span class="tag diff">${esc(n.topic)||'General'}</span>
+          <div style="margin-top:6px;font-size:0.9rem;font-weight:500;">${esc(n.title)}</div>
+          <div class="mini" style="margin-top:3px;">${esc(n.content.slice(0,90))}${n.content.length>90?'…':''}</div>
+        </div>`);
+        card.querySelector('.close-x[data-id]').addEventListener('click', ()=>deleteReferenceNote(n.id));
+        card.querySelector('.close-x[data-edit]').addEventListener('click', ()=>startEditReferenceNote(n));
+        wrap.appendChild(card);
+      });
+    });
+  }
+
   app.appendChild(wrap);
 }
 
@@ -1011,6 +1156,69 @@ async function finalizeTestSelfMarks(){
 
 // ---------- RESULTS TAB ----------
 let expandedResult=null;
+let expandedRef=null;
+function renderReference(){
+  const app=document.getElementById('app');
+  app.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet</h2>`));
+  app.appendChild(renderSubjectFilter());
+
+  const searchWrap=el(`<div style="margin-bottom:16px;"></div>`);
+  const searchInput=el(`<input type="text" placeholder="Search formulas, tricks, techniques…" value="${esc(state.refSearch)}">`);
+  searchInput.addEventListener('input', e=>{ state.refSearch=e.target.value; render(); });
+  searchWrap.appendChild(searchInput);
+  app.appendChild(searchWrap);
+
+  const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
+  const q = state.refSearch.trim().toLowerCase();
+  const matches = state.reference.filter(n=>{
+    if(!passesFilter(n.subject)) return false;
+    if(!q) return true;
+    const hay = [n.title, n.topic, n.content, n.tags].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+
+  if(state.reference.length===0){
+    app.appendChild(el(`<div class="empty">No reference notes added yet — add formulas, tricks, or technique summaries from the Manage tab.</div>`));
+    return;
+  }
+  if(matches.length===0){
+    app.appendChild(el(`<div class="empty">Nothing matches that search.</div>`));
+    return;
+  }
+
+  // group by subject then topic, in that order
+  const bySubject={};
+  matches.forEach(n=>{
+    if(!bySubject[n.subject]) bySubject[n.subject]={};
+    const topic=n.topic||'General';
+    if(!bySubject[n.subject][topic]) bySubject[n.subject][topic]=[];
+    bySubject[n.subject][topic].push(n);
+  });
+
+  SUBJECTS.forEach(subj=>{
+    if(!bySubject[subj]) return;
+    app.appendChild(el(`<div class="mini" style="margin:16px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj}</div>`));
+    Object.keys(bySubject[subj]).sort().forEach(topic=>{
+      app.appendChild(el(`<div class="mini" style="margin:8px 0 6px;font-weight:600;">${esc(topic)}</div>`));
+      bySubject[subj][topic].forEach(n=>{
+        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;cursor:pointer;"></div>`);
+        card.appendChild(el(`<div style="font-size:0.95rem;font-weight:500;">${esc(n.title)}</div>`));
+        if(expandedRef===n.id){
+          const body=el(`<div class="q-prompt" style="margin-top:8px;font-size:0.9rem;">${esc(n.content)}</div>`);
+          card.appendChild(body);
+          if(n.diagramSvg){
+            const dwrap=el(`<div style="background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px;margin-top:8px;display:flex;justify-content:center;"></div>`);
+            dwrap.innerHTML = n.diagramSvg;
+            card.appendChild(dwrap);
+          }
+        }
+        card.addEventListener('click', ()=>{ expandedRef = expandedRef===n.id? null : n.id; render(); });
+        app.appendChild(card);
+      });
+    });
+  });
+}
+
 function pctOf(r){
   const m=r.marks||1;
   if(r.type==='question'){
@@ -1243,14 +1451,14 @@ function render(){
     </header>`));
 
   const nav=el(`<nav class="tabs"></nav>`);
-  [['practice','Practice'],['results','Results'],['manage','Manage']].forEach(([id,label])=>{
+  [['practice','Practice'],['results','Results'],['reference','Reference'],['manage','Manage']].forEach(([id,label])=>{
     const b=el(`<button class="${state.tab===id?'active':''}">${label}</button>`);
     b.addEventListener('click', ()=>setTab(id));
     nav.appendChild(b);
   });
   app.appendChild(nav);
 
-  if(state.tab!=='manage'){
+  if(state.tab!=='manage' && state.tab!=='reference'){
     const bar=el(`<div class="child-bar"><span class="label">Student</span></div>`);
     state.children.forEach(c=>{
       const chip=el(`<div class="chip ${state.currentChild===c.id?'active':''}">${esc(c.name)}</div>`);
@@ -1263,6 +1471,7 @@ function render(){
 
   if(state.tab==='practice') renderPractice();
   else if(state.tab==='results') renderResults();
+  else if(state.tab==='reference') renderReference();
   else if(state.tab==='manage') renderManage();
 }
 
