@@ -7,6 +7,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
@@ -773,6 +775,8 @@ function renderManage(){
       if(state.children.length===0) return false;
       return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type==='question' && r.refId===qId));
     }
+    const bankKeys = SUBJECTS.filter(subj=>state.qbank.some(q=>q.subject===subj)).map(subj=>'manage-bank-'+subj);
+    if(bankKeys.length) wrap.appendChild(expandCollapseBar(()=>bankKeys));
     SUBJECTS.forEach(subj=>{
       const items=state.qbank.filter(q=>q.subject===subj).sort((a,b)=>{
         const da=doneByAllChildren(a.id), db_=doneByAllChildren(b.id);
@@ -886,6 +890,8 @@ function renderManage(){
   if(state.reference.length===0){
     wrap.appendChild(el(`<div class="empty">No reference notes yet.</div>`));
   } else {
+    const noteKeys = SUBJECTS.filter(subj=>state.reference.some(n=>n.subject===subj)).map(subj=>'manage-notes-'+subj);
+    if(noteKeys.length) wrap.appendChild(expandCollapseBar(()=>noteKeys));
     SUBJECTS.forEach(subj=>{
       const items=state.reference.filter(n=>n.subject===subj).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
       if(!items.length) return;
@@ -985,6 +991,11 @@ function renderPractice(){
 
   const todo = allItems.filter(i=>!i.done).sort((a,b)=>(a.obj.createdAt||0)-(b.obj.createdAt||0)); // oldest posted first
   const done = allItems.filter(i=>i.done).sort((a,b)=>b.done.date-a.done.date); // most recently done first
+
+  const practiceKeys=[];
+  if(todo.length) practiceKeys.push('practice-todo');
+  if(done.length) practiceKeys.push('practice-done');
+  if(practiceKeys.length) app.appendChild(expandCollapseBar(()=>practiceKeys));
 
   if(todo.length){
     app.appendChild(subheader('practice-todo', `To do (${todo.length})`, todo.length<=2));
@@ -1229,12 +1240,73 @@ function sectionHeader(key, label){
   header.addEventListener('click', ()=>{ collapsedSections[key]=!collapsedSections[key]; render(); });
   return header;
 }
+// Generic "Expand all / Collapse all" control. getKeys() returns the full list of
+// collapsedSections keys currently relevant to this tab/filter (recomputed fresh on
+// every render, so it always covers every subject and topic actually on screen —
+// not just whichever ones happen to already be in the collapsedSections map).
+// onExtra(collapsed) lets a tab also drive a Set like expandedRefs/expandedResults
+// so individual item bodies open/close in lockstep with their section headers.
+function expandCollapseBar(getKeys, onExtra){
+  const bar=el(`<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px;"></div>`);
+  const expBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Expand all</button>`);
+  const colBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Collapse all</button>`);
+  expBtn.addEventListener('click', ()=>{ getKeys().forEach(k=>{ collapsedSections[k]=false; }); if(onExtra) onExtra(false); render(); });
+  colBtn.addEventListener('click', ()=>{ getKeys().forEach(k=>{ collapsedSections[k]=true; }); if(onExtra) onExtra(true); render(); });
+  bar.appendChild(expBtn); bar.appendChild(colBtn);
+  return bar;
+}
+// Builds a real, downloadable PDF file from the hidden #print-sheet (the full
+// reference library, always — same "complete offline copy" content it always
+// had). This bypasses window.print() entirely: on iOS, tapping "Add to Home
+// Screen" removes Safari's browser chrome, and print() is silently a no-op in
+// that standalone mode with no error and no dialog — which is why the old
+// button did nothing. Rendering to canvas and saving a .pdf file works the
+// same whether the app is a home-screen icon, a bookmark, or a normal tab.
+async function downloadReferencePdf(btn){
+  const sheet=document.getElementById('print-sheet');
+  if(!sheet || !window.html2canvas || !window.jspdf){
+    alert('Could not build the PDF — the PDF library failed to load. Check your connection and try again.');
+    return;
+  }
+  const origLabel=btn.textContent;
+  btn.disabled=true; btn.textContent='Building PDF…';
+  const prevStyle=sheet.getAttribute('style')||'';
+  try{
+    // Temporarily lay the sheet out off-screen (html2canvas can't capture display:none)
+    sheet.style.cssText = prevStyle + ';display:block;position:fixed;left:-9999px;top:0;width:800px;background:#fff;padding:24px;';
+    await new Promise(r=>setTimeout(r,50)); // let layout settle
+    const canvas = await html2canvas(sheet, {backgroundColor:'#ffffff', scale:2, windowWidth:800});
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p','pt','a4');
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW;
+    const imgH = canvas.height * imgW / canvas.width;
+    const imgData = canvas.toDataURL('image/png');
+    let heightLeft = imgH, position = 0;
+    pdf.addImage(imgData, 'PNG', 0, position, imgW, imgH);
+    heightLeft -= pageH;
+    while(heightLeft > 0){
+      position -= pageH;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, position, imgW, imgH);
+      heightLeft -= pageH;
+    }
+    pdf.save('practice-hub-reference.pdf');
+  } catch(err){
+    console.error('PDF generation failed', err);
+    alert('Something went wrong building the PDF. Please try again.');
+  } finally {
+    sheet.setAttribute('style', prevStyle);
+    btn.disabled=false; btn.textContent=origLabel;
+  }
+}
 function renderReference(){
   const app=document.getElementById('app');
   app.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet</h2>`));
 
   const pdfBtn=el(`<button class="btn secondary" style="margin-bottom:16px;">Save as PDF</button>`);
-  pdfBtn.addEventListener('click', ()=>window.print());
+  pdfBtn.addEventListener('click', ()=>downloadReferencePdf(pdfBtn));
   app.appendChild(pdfBtn);
 
   app.appendChild(renderSubjectFilter());
@@ -1299,14 +1371,6 @@ function renderReference(){
       return;
     }
 
-    const topBar=el(`<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;"></div>`);
-    const expAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Expand all</button>`);
-    const colAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Collapse all</button>`);
-    expAllBtn.addEventListener('click', ()=>{ matches.forEach(n=>expandedRefs.add(n.id)); renderResultsInto(resultsContainer); });
-    colAllBtn.addEventListener('click', ()=>{ matches.forEach(n=>expandedRefs.delete(n.id)); renderResultsInto(resultsContainer); });
-    topBar.appendChild(expAllBtn); topBar.appendChild(colAllBtn);
-    container.appendChild(topBar);
-
     // group by subject then topic, in that order
     const bySubject={};
     matches.forEach(n=>{
@@ -1315,6 +1379,19 @@ function renderReference(){
       if(!bySubject[n.subject][topic]) bySubject[n.subject][topic]=[];
       bySubject[n.subject][topic].push(n);
     });
+
+    // Every subject-group and topic-group key currently on screen (respects the
+    // active subject filter + search), so Expand/Collapse all reaches all of them —
+    // not just whichever ones the user happened to have already toggled.
+    const allSectionKeys=[];
+    Object.keys(bySubject).forEach(subj=>{
+      allSectionKeys.push('ref-subj-'+subj);
+      Object.keys(bySubject[subj]).forEach(topic=>allSectionKeys.push('ref-topic-'+subj+'-'+topic));
+    });
+    container.appendChild(expandCollapseBar(()=>allSectionKeys, (collapsed)=>{
+      if(collapsed) matches.forEach(n=>expandedRefs.delete(n.id));
+      else matches.forEach(n=>expandedRefs.add(n.id));
+    }));
 
     SUBJECTS.forEach(subj=>{
       if(!bySubject[subj]) return;
@@ -1432,9 +1509,21 @@ function renderResults(){
   const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
   const list = allList.filter(r=>passesFilter(r.subject));
 
+  // Collects every section key actually rendered below (test history / by topic /
+  // still to do / done), so one control can expand or collapse the whole tab at
+  // once. getKeys() is only called when the button is clicked — by then this
+  // render pass has finished and the array is complete, regardless of where in
+  // the DOM the bar itself sits.
+  const resultsKeys=[];
+  app.appendChild(expandCollapseBar(()=>resultsKeys, (collapsed)=>{
+    if(collapsed) list.forEach(r=>expandedResults.delete(r.id));
+    else list.forEach(r=>expandedResults.add(r.id));
+  }));
+
   // Test history — a dedicated, tests-only report so test performance isn't buried among adhoc questions
   const testResults = list.filter(r=>r.type==='test').sort((a,b)=>b.date-a.date);
   if(testResults.length){
+    resultsKeys.push('results-testhistory');
     const testPcts = testResults.map(pctOf).filter(p=>p!==null);
     const testAvg = testPcts.length ? Math.round(testPcts.reduce((a,b)=>a+b,0)/testPcts.length) : null;
     app.appendChild(sectionHeader('results-testhistory', `Test history (${testResults.length})${testAvg!==null?` — avg ${testAvg}%`:''}`));
@@ -1480,6 +1569,7 @@ function renderResults(){
   });
   const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
   if(topicRows.length){
+    resultsKeys.push('results-bytopic');
     app.appendChild(sectionHeader('results-bytopic', 'By topic (weakest first)'));
     if(!collapsedSections['results-bytopic']){
     const topicCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
@@ -1503,6 +1593,7 @@ function renderResults(){
   ].sort((a,b)=>(a.obj.createdAt||0)-(b.obj.createdAt||0));
 
   if(todoItems.length){
+    resultsKeys.push('results-stilltodo');
     const lowStock = todoItems.length<=2;
     const stdHeader = sectionHeader('results-stilltodo', `Still to do (${todoItems.length})${lowStock?' ⚠ running low':''}`);
     if(lowStock){ stdHeader.style.color='var(--bad)'; stdHeader.style.fontWeight='600'; }
@@ -1530,16 +1621,8 @@ function renderResults(){
     if(todoItems.length===0) app.appendChild(el(`<div class="empty">${state.subjectFilter==='All'?'No attempts yet.':'Nothing in this subject yet.'}</div>`));
     return;
   }
-  const doneHeaderRow=el(`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;"></div>`);
-  doneHeaderRow.appendChild(sectionHeader('results-done', `Done (${list.length})`));
-  const doneToggleBtns=el(`<div style="display:flex;gap:8px;"></div>`);
-  const expandAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Expand all</button>`);
-  const collapseAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Collapse all</button>`);
-  expandAllBtn.addEventListener('click', e=>{ e.stopPropagation(); list.forEach(r=>expandedResults.add(r.id)); renderResultsBody(); });
-  collapseAllBtn.addEventListener('click', e=>{ e.stopPropagation(); list.forEach(r=>expandedResults.delete(r.id)); renderResultsBody(); });
-  doneToggleBtns.appendChild(expandAllBtn); doneToggleBtns.appendChild(collapseAllBtn);
-  doneHeaderRow.appendChild(doneToggleBtns);
-  app.appendChild(doneHeaderRow);
+  resultsKeys.push('results-done');
+  app.appendChild(sectionHeader('results-done', `Done (${list.length})`));
   if(collapsedSections['results-done']) return;
   list.forEach(r=>{
     let scoreText, pct;
