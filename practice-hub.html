@@ -961,7 +961,11 @@ function renderPractice(){
     card.querySelector('button').addEventListener('click', ()=>startQuestion(q));
     return card;
   }
-  function subheader(text, warn){ return el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;${warn?'color:var(--bad);font-weight:600;':''}">${esc(text)}${warn?' ⚠ running low':''}</div>`); }
+  function subheader(key, text, warn){
+    const h = sectionHeader(key, `${text}${warn?' ⚠ running low':''}`);
+    if(warn){ h.style.color='var(--bad)'; h.style.fontWeight='600'; }
+    return h;
+  }
 
   app.appendChild(renderSubjectFilter());
 
@@ -979,12 +983,12 @@ function renderPractice(){
   const done = allItems.filter(i=>i.done).sort((a,b)=>b.done.date-a.done.date); // most recently done first
 
   if(todo.length){
-    app.appendChild(subheader(`To do (${todo.length})`, todo.length<=2));
-    todo.forEach(i=>app.appendChild(i.kind==='test'? testCard(i.obj, null) : questionCard(i.obj, null)));
+    app.appendChild(subheader('practice-todo', `To do (${todo.length})`, todo.length<=2));
+    if(!collapsedSections['practice-todo']) todo.forEach(i=>app.appendChild(i.kind==='test'? testCard(i.obj, null) : questionCard(i.obj, null)));
   }
   if(done.length){
-    app.appendChild(subheader(`Done (${done.length})`));
-    done.forEach(i=>app.appendChild(i.kind==='test'? testCard(i.obj, i.done) : questionCard(i.obj, i.done)));
+    app.appendChild(subheader('practice-done', `Done (${done.length})`));
+    if(!collapsedSections['practice-done']) done.forEach(i=>app.appendChild(i.kind==='test'? testCard(i.obj, i.done) : questionCard(i.obj, i.done)));
   }
 }
 
@@ -1210,8 +1214,17 @@ async function finalizeTestSelfMarks(){
 }
 
 // ---------- RESULTS TAB ----------
-let expandedResult=null;
-let expandedRef=null;
+let expandedResults=new Set();
+let expandedRefs=new Set();
+let collapsedSections={'practice-done':true, 'results-done':true};
+function sectionHeader(key, label){
+  const collapsed = !!collapsedSections[key];
+  const header=el(`<div class="mini" style="margin:14px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;">
+    <span style="display:inline-block;transition:transform .15s;transform:rotate(${collapsed?'-90':'0'}deg);">▾</span><span>${esc(label)}</span>
+  </div>`);
+  header.addEventListener('click', ()=>{ collapsedSections[key]=!collapsedSections[key]; render(); });
+  return header;
+}
 function renderReference(){
   const app=document.getElementById('app');
   app.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet</h2>`));
@@ -1282,6 +1295,14 @@ function renderReference(){
       return;
     }
 
+    const topBar=el(`<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;"></div>`);
+    const expAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Expand all</button>`);
+    const colAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Collapse all</button>`);
+    expAllBtn.addEventListener('click', ()=>{ matches.forEach(n=>expandedRefs.add(n.id)); renderResultsInto(resultsContainer); });
+    colAllBtn.addEventListener('click', ()=>{ matches.forEach(n=>expandedRefs.delete(n.id)); renderResultsInto(resultsContainer); });
+    topBar.appendChild(expAllBtn); topBar.appendChild(colAllBtn);
+    container.appendChild(topBar);
+
     // group by subject then topic, in that order
     const bySubject={};
     matches.forEach(n=>{
@@ -1293,13 +1314,16 @@ function renderReference(){
 
     SUBJECTS.forEach(subj=>{
       if(!bySubject[subj]) return;
-      container.appendChild(el(`<div class="mini" style="margin:16px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj}</div>`));
+      const subjKey='ref-subj-'+subj;
+      const subjHeader=sectionHeader(subjKey, subj);
+      container.appendChild(subjHeader);
+      if(collapsedSections[subjKey]) return;
       Object.keys(bySubject[subj]).sort().forEach(topic=>{
         container.appendChild(el(`<div class="mini" style="margin:8px 0 6px;font-weight:600;">${esc(topic)}</div>`));
         bySubject[subj][topic].forEach(n=>{
           const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;cursor:pointer;"></div>`);
           card.appendChild(el(`<div style="font-size:0.95rem;font-weight:500;">${esc(n.title)}</div>`));
-          if(expandedRef===n.id){
+          if(expandedRefs.has(n.id)){
             const body=el(`<div class="q-prompt" style="margin-top:8px;font-size:0.9rem;">${esc(n.content)}</div>`);
             card.appendChild(body);
             if(n.diagramSvg){
@@ -1308,7 +1332,7 @@ function renderReference(){
               card.appendChild(dwrap);
             }
           }
-          card.addEventListener('click', ()=>{ expandedRef = expandedRef===n.id? null : n.id; renderResultsInto(resultsContainer); });
+          card.addEventListener('click', ()=>{ if(expandedRefs.has(n.id)) expandedRefs.delete(n.id); else expandedRefs.add(n.id); renderResultsInto(resultsContainer); });
           container.appendChild(card);
         });
       });
@@ -1403,7 +1427,8 @@ function renderResults(){
   if(testResults.length){
     const testPcts = testResults.map(pctOf).filter(p=>p!==null);
     const testAvg = testPcts.length ? Math.round(testPcts.reduce((a,b)=>a+b,0)/testPcts.length) : null;
-    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Test history (${testResults.length})${testAvg!==null?` — avg ${testAvg}%`:''}</div>`));
+    app.appendChild(sectionHeader('results-testhistory', `Test history (${testResults.length})${testAvg!==null?` — avg ${testAvg}%`:''}`));
+    if(!collapsedSections['results-testhistory']){
     const testCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
     testResults.forEach(r=>{
       const pct = pctOf(r);
@@ -1417,6 +1442,7 @@ function renderResults(){
     });
     testCard.lastChild.style.borderBottom='none';
     app.appendChild(testCard);
+    }
   }
 
   // By topic — weakest first, combines standalone questions AND questions inside completed tests
@@ -1444,7 +1470,8 @@ function renderResults(){
   });
   const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
   if(topicRows.length){
-    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">By topic (weakest first)</div>`));
+    app.appendChild(sectionHeader('results-bytopic', 'By topic (weakest first)'));
+    if(!collapsedSections['results-bytopic']){
     const topicCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
     topicRows.forEach(t=>{
       topicCard.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);">
@@ -1454,6 +1481,7 @@ function renderResults(){
     });
     topicCard.lastChild.style.borderBottom='none';
     app.appendChild(topicCard);
+    }
   }
 
   // Still to do — items with no attempt yet by this child, combined & sorted oldest-posted-first
@@ -1466,7 +1494,10 @@ function renderResults(){
 
   if(todoItems.length){
     const lowStock = todoItems.length<=2;
-    app.appendChild(el(`<div class="mini" style="margin:10px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;${lowStock?'color:var(--bad);font-weight:600;':''}">Still to do (${todoItems.length})${lowStock?' ⚠ running low':''}</div>`));
+    const stdHeader = sectionHeader('results-stilltodo', `Still to do (${todoItems.length})${lowStock?' ⚠ running low':''}`);
+    if(lowStock){ stdHeader.style.color='var(--bad)'; stdHeader.style.fontWeight='600'; }
+    app.appendChild(stdHeader);
+    if(!collapsedSections['results-stilltodo']){
     todoItems.forEach(({kind,obj})=>{
       if(kind==='test'){
         app.appendChild(el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.8;">
@@ -1482,13 +1513,24 @@ function renderResults(){
         </div>`));
       }
     });
+    }
   }
 
   if(list.length===0){
     if(todoItems.length===0) app.appendChild(el(`<div class="empty">${state.subjectFilter==='All'?'No attempts yet.':'Nothing in this subject yet.'}</div>`));
     return;
   }
-  app.appendChild(el(`<div class="mini" style="margin:18px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">Done (${list.length})</div>`));
+  const doneHeaderRow=el(`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;"></div>`);
+  doneHeaderRow.appendChild(sectionHeader('results-done', `Done (${list.length})`));
+  const doneToggleBtns=el(`<div style="display:flex;gap:8px;"></div>`);
+  const expandAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Expand all</button>`);
+  const collapseAllBtn=el(`<button class="btn secondary" style="padding:4px 10px;font-size:0.7rem;">Collapse all</button>`);
+  expandAllBtn.addEventListener('click', e=>{ e.stopPropagation(); list.forEach(r=>expandedResults.add(r.id)); renderResultsBody(); });
+  collapseAllBtn.addEventListener('click', e=>{ e.stopPropagation(); list.forEach(r=>expandedResults.delete(r.id)); renderResultsBody(); });
+  doneToggleBtns.appendChild(expandAllBtn); doneToggleBtns.appendChild(collapseAllBtn);
+  doneHeaderRow.appendChild(doneToggleBtns);
+  app.appendChild(doneHeaderRow);
+  if(collapsedSections['results-done']) return;
   list.forEach(r=>{
     let scoreText, pct;
     const m = r.marks||1;
@@ -1520,9 +1562,9 @@ function renderResults(){
       </div>
       <span class="score-pill ${scoreLabel(pct)}" style="flex:0 0 auto;">${scoreText}</span>
     </div>`));
-    card.addEventListener('click', ()=>{ expandedResult = expandedResult===r.id? null : r.id; renderResultsBody(); });
+    card.addEventListener('click', ()=>{ if(expandedResults.has(r.id)) expandedResults.delete(r.id); else expandedResults.add(r.id); renderResultsBody(); });
     app.appendChild(card);
-    if(expandedResult===r.id){
+    if(expandedResults.has(r.id)){
       const panel=el(`<div class="detail-panel" style="margin-top:-8px;margin-bottom:16px;"></div>`);
       (r.detail||[]).forEach(d=>{
         panel.appendChild(el(`<div style="margin-bottom:10px;">
