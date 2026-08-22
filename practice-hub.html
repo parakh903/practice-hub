@@ -780,7 +780,9 @@ function renderManage(){
         return (b.createdAt||0)-(a.createdAt||0);
       });
       if(!items.length) return;
-      wrap.appendChild(el(`<div class="mini" style="margin:14px 0 6px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj} — ${items.length}</div>`));
+      const bankKey='manage-bank-'+subj;
+      wrap.appendChild(sectionHeader(bankKey, `${subj} — ${items.length}`));
+      if(collapsedSections[bankKey]) return;
       items.forEach(q=>{
         const isPending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
         const allDone = doneByAllChildren(q.id);
@@ -812,10 +814,10 @@ function renderManage(){
   });
   tf.querySelector('#tf-save').addEventListener('click', saveTest);
 
-  wrap.appendChild(el(`<h2 class="section-title">Existing tests (${state.tests.length})</h2>`));
+  wrap.appendChild(sectionHeader('manage-tests', `Existing tests (${state.tests.length})`));
   if(state.tests.length===0){
     wrap.appendChild(el(`<div class="empty">No tests built yet.</div>`));
-  } else {
+  } else if(!collapsedSections['manage-tests']) {
     state.tests.forEach(t=>{
       const isPending = state.pendingDelete && state.pendingDelete.type==='test' && state.pendingDelete.id===t.id;
       const card=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;">
@@ -887,7 +889,9 @@ function renderManage(){
     SUBJECTS.forEach(subj=>{
       const items=state.reference.filter(n=>n.subject===subj).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
       if(!items.length) return;
-      wrap.appendChild(el(`<div class="mini" style="margin:14px 0 6px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${subj} — ${items.length}</div>`));
+      const noteKey='manage-notes-'+subj;
+      wrap.appendChild(sectionHeader(noteKey, `${subj} — ${items.length}`));
+      if(collapsedSections[noteKey]) return;
       items.forEach(n=>{
         const isPending = state.pendingDelete && state.pendingDelete.type==='reference' && state.pendingDelete.id===n.id;
         const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;">
@@ -1319,7 +1323,13 @@ function renderReference(){
       container.appendChild(subjHeader);
       if(collapsedSections[subjKey]) return;
       Object.keys(bySubject[subj]).sort().forEach(topic=>{
-        container.appendChild(el(`<div class="mini" style="margin:8px 0 6px;font-weight:600;">${esc(topic)}</div>`));
+        const topicKey='ref-topic-'+subj+'-'+topic;
+        const topicHeader=el(`<div class="mini" style="margin:8px 0 6px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;user-select:none;">
+          <span style="display:inline-block;transition:transform .15s;transform:rotate(${collapsedSections[topicKey]?'-90':'0'}deg);font-weight:400;">▾</span>${esc(topic)} <span style="font-weight:400;color:var(--ink-soft);">(${bySubject[subj][topic].length})</span>
+        </div>`);
+        topicHeader.addEventListener('click', ()=>{ collapsedSections[topicKey]=!collapsedSections[topicKey]; renderResultsInto(resultsContainer); });
+        container.appendChild(topicHeader);
+        if(collapsedSections[topicKey]) return;
         bySubject[subj][topic].forEach(n=>{
           const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;cursor:pointer;"></div>`);
           card.appendChild(el(`<div style="font-size:0.95rem;font-weight:500;">${esc(n.title)}</div>`));
