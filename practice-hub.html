@@ -7,7 +7,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
@@ -661,6 +660,12 @@ function renderManage(){
   const app=document.getElementById('app');
   const wrap=el(`<div></div>`);
 
+  // Collects every collapsible section key actually rendered below, so one
+  // control at the top can open/close the whole tab — including the forms,
+  // which is what was forcing a long scroll to reach things like bulk import.
+  const manageKeys=[];
+  wrap.appendChild(expandCollapseBar(()=>manageKeys));
+
   // Stock levels — how many fresh (not-done-by-everyone) items remain per subject
   function doneByAllChildrenGlobal(type, refId){
     if(state.children.length===0) return false;
@@ -743,7 +748,9 @@ function renderManage(){
   kids.appendChild(buildAddChildControl('card'));
   wrap.appendChild(kids);
 
-  wrap.appendChild(el(`<h2 class="section-title">Bulk add questions</h2>`));
+  manageKeys.push('manage-bulkq');
+  wrap.appendChild(sectionHeader('manage-bulkq', 'Bulk add questions'));
+  if(!collapsedSections['manage-bulkq']){
   const bulkCard=el(`<div class="card">
     <div class="mini" style="margin-bottom:8px;">Paste a block of questions (ask Claude for a batch in this format) and add them all in one go — no need to fill in the form for each one.</div>
     <textarea id="bulk-text" style="min-height:140px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","difficulty":"Extension","type":"mcq","topic":"Indices","timeMinutes":2,"marks":1,"prompt":"...","options":["A","B","C","D"],"correctIndex":0,"solution":"..."}]'>${esc(state.bulkText)}</textarea>
@@ -755,8 +762,11 @@ function renderManage(){
   bulkCard.querySelector('#bulk-text').addEventListener('input', e=>{ state.bulkText=e.target.value; });
   bulkCard.querySelector('#bulk-import-btn').addEventListener('click', bulkImport);
   wrap.appendChild(bulkCard);
+  }
 
-  wrap.appendChild(el(`<h2 class="section-title">Add a single question to the bank</h2>`));
+  manageKeys.push('manage-addq');
+  wrap.appendChild(sectionHeader('manage-addq', 'Add a single question to the bank'));
+  if(!collapsedSections['manage-addq']){
   const qf=el(renderQForm());
   wrap.appendChild(qf);
   const typeFieldsContainer=qf.querySelector('#qf-type-fields');
@@ -766,6 +776,7 @@ function renderManage(){
   qf.querySelector('#qf-type').addEventListener('change', e=>{ qForm.type=e.target.value; renderQTypeFields(typeFieldsContainer); });
   qf.querySelector('#qf-save').addEventListener('click', saveQuestion);
   if(qf.querySelector('#qf-cancel')) qf.querySelector('#qf-cancel').addEventListener('click', cancelEditQuestion);
+  }
 
   wrap.appendChild(el(`<h2 class="section-title">Question bank (${state.qbank.length})</h2>`));
   if(state.qbank.length===0){
@@ -776,7 +787,7 @@ function renderManage(){
       return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type==='question' && r.refId===qId));
     }
     const bankKeys = SUBJECTS.filter(subj=>state.qbank.some(q=>q.subject===subj)).map(subj=>'manage-bank-'+subj);
-    if(bankKeys.length) wrap.appendChild(expandCollapseBar(()=>bankKeys));
+    manageKeys.push(...bankKeys);
     SUBJECTS.forEach(subj=>{
       const items=state.qbank.filter(q=>q.subject===subj).sort((a,b)=>{
         const da=doneByAllChildren(a.id), db_=doneByAllChildren(b.id);
@@ -803,7 +814,9 @@ function renderManage(){
     });
   }
 
-  wrap.appendChild(el(`<h2 class="section-title">Build a timed test</h2>`));
+  manageKeys.push('manage-buildtest');
+  wrap.appendChild(sectionHeader('manage-buildtest', 'Build a timed test'));
+  if(!collapsedSections['manage-buildtest']){
   const tf=el(renderTestForm());
   wrap.appendChild(tf);
   tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); testForm.timeLimitTouched=false; render(); });
@@ -817,7 +830,9 @@ function renderManage(){
     });
   });
   tf.querySelector('#tf-save').addEventListener('click', saveTest);
+  }
 
+  manageKeys.push('manage-tests');
   wrap.appendChild(sectionHeader('manage-tests', `Existing tests (${state.tests.length})`));
   if(state.tests.length===0){
     wrap.appendChild(el(`<div class="empty">No tests built yet.</div>`));
@@ -838,6 +853,9 @@ function renderManage(){
   // ---- Reference / cheat sheet notes ----
   wrap.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet notes</h2>`));
   const refEditing = !!refForm.editId;
+  manageKeys.push('manage-addnote');
+  wrap.appendChild(sectionHeader('manage-addnote', refEditing ? 'Editing existing note' : 'Add a reference note'));
+  if(!collapsedSections['manage-addnote'] || refEditing){
   const refCard=el(`<div class="card" style="${refEditing?'border-left:5px solid var(--english);':''}">
     ${refEditing?`<div class="mini" style="margin-bottom:10px;color:var(--english);font-weight:600;">EDITING EXISTING NOTE</div>`:''}
     <div class="row">
@@ -867,7 +885,11 @@ function renderManage(){
   refCard.querySelector('#rf-save').addEventListener('click', saveReferenceNote);
   if(refCard.querySelector('#rf-cancel')) refCard.querySelector('#rf-cancel').addEventListener('click', cancelEditReferenceNote);
   wrap.appendChild(refCard);
+  }
 
+  manageKeys.push('manage-bulknotes');
+  wrap.appendChild(sectionHeader('manage-bulknotes', 'Bulk import reference notes'));
+  if(!collapsedSections['manage-bulknotes']){
   const refBulkCard=el(`<div class="card">
     <div class="mini" style="margin-bottom:8px;">Paste a batch of reference notes (ask Claude for a set in this format) to add them all at once.</div>
     <textarea id="rf-bulk-text" style="min-height:120px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","topic":"Indices","title":"Multiplying powers","content":"a^m × a^n = a^(m+n)","tags":"powers, exponents"}]'>${esc(state.refBulkText)}</textarea>
@@ -879,6 +901,7 @@ function renderManage(){
   refBulkCard.querySelector('#rf-bulk-text').addEventListener('input', e=>{ state.refBulkText=e.target.value; });
   refBulkCard.querySelector('#rf-bulk-btn').addEventListener('click', bulkImportReference);
   wrap.appendChild(refBulkCard);
+  }
 
   const clearPending = state.pendingDelete && state.pendingDelete.type==='clearAllReference';
   const headerRow=el(`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
@@ -891,7 +914,7 @@ function renderManage(){
     wrap.appendChild(el(`<div class="empty">No reference notes yet.</div>`));
   } else {
     const noteKeys = SUBJECTS.filter(subj=>state.reference.some(n=>n.subject===subj)).map(subj=>'manage-notes-'+subj);
-    if(noteKeys.length) wrap.appendChild(expandCollapseBar(()=>noteKeys));
+    manageKeys.push(...noteKeys);
     SUBJECTS.forEach(subj=>{
       const items=state.reference.filter(n=>n.subject===subj).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
       if(!items.length) return;
@@ -1231,7 +1254,7 @@ async function finalizeTestSelfMarks(){
 // ---------- RESULTS TAB ----------
 let expandedResults=new Set();
 let expandedRefs=new Set();
-let collapsedSections={'practice-done':true, 'results-done':true};
+let collapsedSections={'practice-done':true, 'results-done':true, 'manage-bulkq':true, 'manage-addq':true, 'manage-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
 function sectionHeader(key, label){
   const collapsed = !!collapsedSections[key];
   const header=el(`<div class="mini" style="margin:14px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;">
@@ -1255,49 +1278,113 @@ function expandCollapseBar(getKeys, onExtra){
   bar.appendChild(expBtn); bar.appendChild(colBtn);
   return bar;
 }
-// Builds a real, downloadable PDF file from the hidden #print-sheet (the full
-// reference library, always — same "complete offline copy" content it always
-// had). This bypasses window.print() entirely: on iOS, tapping "Add to Home
-// Screen" removes Safari's browser chrome, and print() is silently a no-op in
-// that standalone mode with no error and no dialog — which is why the old
-// button did nothing. Rendering to canvas and saving a .pdf file works the
-// same whether the app is a home-screen icon, a bookmark, or a normal tab.
+// Rasterizes one diagram SVG to a PNG data URL using the browser's native SVG
+// image decoder (an <img> with a data: URL) — not html2canvas. This is the part
+// that most likely broke last time: html2canvas has to re-implement CSS/font/SVG
+// rendering itself and is known to fail silently or throw on iOS Safari with
+// custom @import'ed fonts and inline SVG, with no useful error surfaced. Letting
+// the browser draw the SVG natively (the same way it already draws it on screen)
+// sidesteps that whole failure class.
+function svgStringToPng(svgString){
+  return new Promise((resolve, reject)=>{
+    try{
+      const img=new Image();
+      img.onload=()=>{
+        const w=img.naturalWidth||300, h=img.naturalHeight||200, scale=2;
+        const canvas=document.createElement('canvas');
+        canvas.width=w*scale; canvas.height=h*scale;
+        const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        resolve({dataUrl:canvas.toDataURL('image/png'), width:w, height:h});
+      };
+      img.onerror=()=>reject(new Error('SVG failed to rasterize'));
+      img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svgString);
+    }catch(e){ reject(e); }
+  });
+}
+
+// Builds a real, downloadable PDF file directly from state.reference (the full
+// library, all subjects/topics, regardless of whatever filter/search is on
+// screen) using jsPDF's own text layout — not a DOM screenshot. This bypasses
+// window.print() entirely: on iOS, "Add to Home Screen" removes Safari's browser
+// chrome, and print() is silently a no-op in that standalone mode with no error
+// and no dialog, which is why the very first version of this button did nothing.
+// The follow-up version used html2canvas to screenshot a hidden print-only div,
+// which is exactly the kind of thing that fails quietly on iOS Safari with custom
+// fonts and SVG. Drawing text with jsPDF and diagrams via svgStringToPng above
+// avoids both failure modes and works the same in standalone mode, a bookmark,
+// or a normal tab.
 async function downloadReferencePdf(btn){
-  const sheet=document.getElementById('print-sheet');
-  if(!sheet || !window.html2canvas || !window.jspdf){
+  if(!window.jspdf){
     alert('Could not build the PDF — the PDF library failed to load. Check your connection and try again.');
     return;
   }
   const origLabel=btn.textContent;
   btn.disabled=true; btn.textContent='Building PDF…';
-  const prevStyle=sheet.getAttribute('style')||'';
   try{
-    // Temporarily lay the sheet out off-screen (html2canvas can't capture display:none)
-    sheet.style.cssText = prevStyle + ';display:block;position:fixed;left:-9999px;top:0;width:800px;background:#fff;padding:24px;';
-    await new Promise(r=>setTimeout(r,50)); // let layout settle
-    const canvas = await html2canvas(sheet, {backgroundColor:'#ffffff', scale:2, windowWidth:800});
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF('p','pt','a4');
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const imgW = pageW;
-    const imgH = canvas.height * imgW / canvas.width;
-    const imgData = canvas.toDataURL('image/png');
-    let heightLeft = imgH, position = 0;
-    pdf.addImage(imgData, 'PNG', 0, position, imgW, imgH);
-    heightLeft -= pageH;
-    while(heightLeft > 0){
-      position -= pageH;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, position, imgW, imgH);
-      heightLeft -= pageH;
+    const marginX=42, pageW=pdf.internal.pageSize.getWidth(), pageH=pdf.internal.pageSize.getHeight();
+    const contentW = pageW - marginX*2;
+    let y = 54;
+    function ensureSpace(needed){
+      if(y+needed > pageH-40){ pdf.addPage(); y=54; }
+    }
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(17);
+    pdf.text('Practice Hub — Reference & Cheat Sheet', marginX, y); y+=26;
+
+    const bySubject={};
+    state.reference.forEach(n=>{
+      if(!bySubject[n.subject]) bySubject[n.subject]={};
+      const topic=n.topic||'General';
+      if(!bySubject[n.subject][topic]) bySubject[n.subject][topic]=[];
+      bySubject[n.subject][topic].push(n);
+    });
+
+    for(const subj of SUBJECTS){
+      if(!bySubject[subj]) continue;
+      ensureSpace(28);
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(14);
+      pdf.text(subj, marginX, y); y+=6;
+      pdf.setDrawColor(180); pdf.line(marginX,y,pageW-marginX,y); y+=18;
+
+      for(const topic of Object.keys(bySubject[subj]).sort()){
+        ensureSpace(18);
+        pdf.setFont('helvetica','bold'); pdf.setFontSize(11.5);
+        pdf.text(topic, marginX, y); y+=15;
+
+        for(const n of bySubject[subj][topic]){
+          const titleLines = pdf.splitTextToSize(n.title, contentW);
+          ensureSpace(titleLines.length*13+4);
+          pdf.setFont('helvetica','bold'); pdf.setFontSize(10.5);
+          pdf.text(titleLines, marginX, y); y += titleLines.length*13+2;
+
+          const contentLines = pdf.splitTextToSize(n.content||'', contentW);
+          ensureSpace(contentLines.length*12);
+          pdf.setFont('helvetica','normal'); pdf.setFontSize(9.5);
+          pdf.text(contentLines, marginX, y); y += contentLines.length*12+4;
+
+          if(n.diagramSvg){
+            try{
+              const {dataUrl,width,height} = await svgStringToPng(n.diagramSvg);
+              const drawW = Math.min(contentW, 260);
+              const drawH = height*(drawW/width);
+              ensureSpace(drawH+12);
+              pdf.addImage(dataUrl,'PNG', marginX, y, drawW, drawH);
+              y += drawH+12;
+            }catch(err){ console.error('Diagram failed to render for PDF:', n.title, err); }
+          }
+          y += 6;
+        }
+      }
+      y += 8;
     }
     pdf.save('practice-hub-reference.pdf');
-  } catch(err){
+  }catch(err){
     console.error('PDF generation failed', err);
     alert('Something went wrong building the PDF. Please try again.');
-  } finally {
-    sheet.setAttribute('style', prevStyle);
+  }finally{
     btn.disabled=false; btn.textContent=origLabel;
   }
 }
