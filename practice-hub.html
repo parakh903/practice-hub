@@ -672,7 +672,9 @@ function renderManage(){
     return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type===type && r.refId===refId));
   }
   const LOW_Q = 3, LOW_T = 1;
-  wrap.appendChild(el(`<h2 class="section-title">Stock levels</h2>`));
+  manageKeys.push('manage-stock');
+  wrap.appendChild(sectionHeader('manage-stock', 'Stock levels'));
+  if(!collapsedSections['manage-stock']){
   const stockRow=el(`<div class="row" style="margin-bottom:20px;"></div>`);
   SUBJECTS.forEach(subj=>{
     const subjQ = state.qbank.filter(q=>q.subject===subj);
@@ -739,14 +741,18 @@ function renderManage(){
     URL.revokeObjectURL(url);
   });
   wrap.appendChild(exportCard);
+  }
 
-  wrap.appendChild(el(`<h2 class="section-title">Children</h2>`));
+  manageKeys.push('manage-children');
+  wrap.appendChild(sectionHeader('manage-children', `Children (${state.children.length})`));
+  if(!collapsedSections['manage-children']){
   const kids=el(`<div class="row" style="margin-bottom:20px;"></div>`);
   state.children.forEach(c=>{
     kids.appendChild(el(`<div class="card" style="flex:0 0 auto;padding:10px 16px;">${esc(c.name)}</div>`));
   });
   kids.appendChild(buildAddChildControl('card'));
   wrap.appendChild(kids);
+  }
 
   manageKeys.push('manage-bulkq');
   wrap.appendChild(sectionHeader('manage-bulkq', 'Bulk add questions'));
@@ -778,7 +784,9 @@ function renderManage(){
   if(qf.querySelector('#qf-cancel')) qf.querySelector('#qf-cancel').addEventListener('click', cancelEditQuestion);
   }
 
-  wrap.appendChild(el(`<h2 class="section-title">Question bank (${state.qbank.length})</h2>`));
+  manageKeys.push('manage-bank');
+  wrap.appendChild(sectionHeader('manage-bank', `Question bank (${state.qbank.length})`));
+  if(!collapsedSections['manage-bank']){
   if(state.qbank.length===0){
     wrap.appendChild(el(`<div class="empty">No questions yet. Add your first one above.</div>`));
   } else {
@@ -812,6 +820,7 @@ function renderManage(){
         wrap.appendChild(card);
       });
     });
+  }
   }
 
   manageKeys.push('manage-buildtest');
@@ -851,8 +860,10 @@ function renderManage(){
   }
 
   // ---- Reference / cheat sheet notes ----
-  wrap.appendChild(el(`<h2 class="section-title">Reference &amp; cheat sheet notes</h2>`));
+  manageKeys.push('manage-refnotes');
+  wrap.appendChild(sectionHeader('manage-refnotes', 'Reference & cheat sheet notes'));
   const refEditing = !!refForm.editId;
+  if(!collapsedSections['manage-refnotes'] || refEditing){
   manageKeys.push('manage-addnote');
   wrap.appendChild(sectionHeader('manage-addnote', refEditing ? 'Editing existing note' : 'Add a reference note'));
   if(!collapsedSections['manage-addnote'] || refEditing){
@@ -902,14 +913,19 @@ function renderManage(){
   refBulkCard.querySelector('#rf-bulk-btn').addEventListener('click', bulkImportReference);
   wrap.appendChild(refBulkCard);
   }
+  } // end manage-refnotes
 
   const clearPending = state.pendingDelete && state.pendingDelete.type==='clearAllReference';
-  const headerRow=el(`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="margin:0;border:none;padding:0;flex:1;">Existing notes (${state.reference.length})</h2>
-    ${state.reference.length>0?`<button class="btn ${clearPending?'danger':'secondary'}" id="rf-clear-all" style="flex:0 0 auto;">${clearPending?'Confirm clear ALL notes?':'Clear all'}</button>`:''}
-  </div>`);
-  if(headerRow.querySelector('#rf-clear-all')) headerRow.querySelector('#rf-clear-all').addEventListener('click', clearAllReferenceNotes);
+  manageKeys.push('manage-existingnotes');
+  const headerRow=el(`<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;"></div>`);
+  headerRow.appendChild(sectionHeader('manage-existingnotes', `Existing notes (${state.reference.length})`));
+  if(state.reference.length>0){
+    const clearBtn=el(`<button class="btn ${clearPending?'danger':'secondary'}" style="flex:0 0 auto;">${clearPending?'Confirm clear ALL notes?':'Clear all'}</button>`);
+    clearBtn.addEventListener('click', clearAllReferenceNotes);
+    headerRow.appendChild(clearBtn);
+  }
   wrap.appendChild(headerRow);
+  if(!collapsedSections['manage-existingnotes']){
   if(state.reference.length===0){
     wrap.appendChild(el(`<div class="empty">No reference notes yet.</div>`));
   } else {
@@ -936,6 +952,7 @@ function renderManage(){
       });
     });
   }
+  } // end manage-existingnotes
 
   app.appendChild(wrap);
 }
