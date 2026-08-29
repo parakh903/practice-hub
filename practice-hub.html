@@ -12,19 +12,47 @@
 @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
 :root{
-  --ink:#1E2A38;
-  --ink-soft:#4B5A6B;
-  --paper:#F4F6F5;
-  --paper-card:#FFFFFF;
-  --line:#D7DEDC;
-  --maths:#2F6F6B;
-  --maths-bg:#E7F0EF;
-  --science:#6C4F9C;
-  --science-bg:#EFE9F5;
-  --english:#C77B3D;
-  --english-bg:#FBEEE1;
-  --good:#2F7D4F;
-  --bad:#B5473A;
+  /* Structure: near-black navy base + soft off-white ink, so subject colour
+     and diagrams are what pop, not the background itself. */
+  --ink:#EDF1F5;
+  --ink-soft:#8FA0B3;
+  --paper:#10141A;
+  --paper-card:#1A2029;
+  --line:#2A323C;
+
+  /* Subject colours — same hues as the diagrams (teal/violet/orange) but
+     brightened and saturated so they glow against the dark base instead of
+     the muted daytime tones that worked on cream paper. */
+  --maths:#4FE0D2;
+  --maths-bg:rgba(79,224,210,0.14);
+  --science:#B98CFF;
+  --science-bg:rgba(185,140,255,0.15);
+  --english:#FF9B57;
+  --english-bg:rgba(255,155,87,0.15);
+
+  --good:#4ADE80;
+  --good-bg:rgba(74,222,128,0.14);
+  --bad:#FF6B6B;
+  --bad-bg:rgba(255,107,107,0.14);
+  --mid-text:#FFC15E;
+  --mid-bg:rgba(255,193,94,0.16);
+
+  /* Light-on-dark overlays for hover/selected states (previously these darkened
+     an already-light background — inverted here so they lighten a dark one). */
+  --hover-tint:rgba(255,255,255,0.06);
+  --select-tint:rgba(255,255,255,0.09);
+  --row-hover-tint:rgba(255,255,255,0.045);
+  --tag-diff-bg:rgba(255,255,255,0.09);
+  --grid-line:rgba(255,255,255,0.035);
+
+  /* Reference material — worked solutions, diagrams, detail panels — keeps its
+     original warm-paper treatment on purpose: a lit index card on a dark desk,
+     and the one place all 30+ hand-checked diagrams keep working unmodified. */
+  --inset-bg:#FBFAF6;
+  --inset-line:#E3DFD4;
+  --inset-ink:#1E2A38;
+  --inset-ink-soft:#5B6B7A;
+
   --font-display:'Source Serif 4', Georgia, serif;
   --font-body:'IBM Plex Sans', system-ui, sans-serif;
   --font-mono:'IBM Plex Mono', monospace;
@@ -35,8 +63,8 @@ body{
   font-family:var(--font-body);
   color:var(--ink);
   background:
-    linear-gradient(90deg, rgba(180,195,192,0.35) 1px, transparent 1px) 0 0/28px 28px,
-    linear-gradient(rgba(180,195,192,0.35) 1px, transparent 1px) 0 0/28px 28px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0/28px 28px,
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0/28px 28px,
     var(--paper);
   min-height:100vh;
 }
@@ -58,7 +86,7 @@ nav.tabs button{
   padding:8px 16px;border-radius:2px;cursor:pointer;transition:all .15s;
 }
 nav.tabs button.active{background:var(--ink);color:var(--paper);}
-nav.tabs button:hover:not(.active){background:rgba(30,42,56,0.08);}
+nav.tabs button:hover:not(.active){background:var(--hover-tint);}
 
 .child-bar{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap;}
 .child-bar .label{font-family:var(--font-mono);font-size:0.72rem;color:var(--ink-soft);text-transform:uppercase;letter-spacing:0.04em;}
@@ -85,7 +113,7 @@ nav.tabs button:hover:not(.active){background:rgba(30,42,56,0.08);}
 .tag.Maths{background:var(--maths-bg);color:var(--maths);}
 .tag.Science{background:var(--science-bg);color:var(--science);}
 .tag.English{background:var(--english-bg);color:var(--english);}
-.tag.diff{background:#EFEDE8;color:var(--ink-soft);}
+.tag.diff{background:var(--tag-diff-bg);color:var(--ink-soft);}
 
 h2.section-title{
   font-family:var(--font-display);font-size:1.15rem;margin:28px 0 12px;
@@ -102,12 +130,12 @@ h2.section-title{
   transition:border-color .12s;
 }
 .opt:hover{border-color:var(--ink-soft);}
-.opt.selected{border-color:var(--ink);background:rgba(30,42,56,0.05);}
-.opt.correct{border-color:var(--good);background:rgba(47,125,79,0.08);}
-.opt.incorrect{border-color:var(--bad);background:rgba(181,71,58,0.08);}
+.opt.selected{border-color:var(--ink);background:var(--select-tint);}
+.opt.correct{border-color:var(--good);background:var(--good-bg);}
+.opt.incorrect{border-color:var(--bad);background:var(--bad-bg);}
 input[type=text], input[type=number], textarea, select{
   font-family:var(--font-body);font-size:0.92rem;padding:9px 11px;border:1.5px solid var(--line);
-  border-radius:5px;width:100%;background:#fff;color:var(--ink);
+  border-radius:5px;width:100%;background:var(--paper-card);color:var(--ink);
 }
 textarea{min-height:80px;resize:vertical;}
 label.field{display:block;font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;
@@ -123,11 +151,11 @@ label.field{display:block;font-family:var(--font-mono);font-size:0.68rem;text-tr
 .row{display:flex;gap:10px;flex-wrap:wrap;}
 .row > *{flex:1;min-width:140px;}
 .solution-box{
-  background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px 16px;margin-top:10px;
-  font-size:0.9rem;line-height:1.55;
+  background:var(--inset-bg);border:1px solid var(--inset-line);border-radius:5px;padding:14px 16px;margin-top:10px;
+  font-size:0.9rem;line-height:1.55;color:var(--inset-ink);
 }
 .solution-box .lbl{font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;
-  color:var(--ink-soft);letter-spacing:0.05em;margin-bottom:6px;}
+  color:var(--inset-ink-soft);letter-spacing:0.05em;margin-bottom:6px;}
 .timer{
   font-family:var(--font-mono);font-size:1.6rem;font-weight:600;position:sticky;top:10px;
   background:var(--ink);color:var(--paper);padding:8px 18px;border-radius:5px;display:inline-block;
@@ -141,18 +169,20 @@ th{
 }
 td{padding:9px 10px;border-bottom:1px solid var(--line);}
 tr.result-row{cursor:pointer;}
-tr.result-row:hover{background:rgba(30,42,56,0.03);}
+tr.result-row:hover{background:var(--row-hover-tint);}
 .score-pill{
   font-family:var(--font-mono);font-weight:600;font-size:0.85rem;padding:3px 10px;border-radius:20px;
 }
-.score-pill.high{background:rgba(47,125,79,0.12);color:var(--good);}
-.score-pill.mid{background:rgba(199,123,61,0.15);color:#8a5626;}
-.score-pill.low{background:rgba(181,71,58,0.12);color:var(--bad);}
+.score-pill.high{background:var(--good-bg);color:var(--good);}
+.score-pill.mid{background:var(--mid-bg);color:var(--mid-text);}
+.score-pill.low{background:var(--bad-bg);color:var(--bad);}
 .checkbox-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:5px;padding:8px;}
-.checkbox-item{display:flex;align-items:flex-start;gap:8px;padding:7px 6px;border-bottom:1px solid #eee;font-size:0.85rem;}
+.checkbox-item{display:flex;align-items:flex-start;gap:8px;padding:7px 6px;border-bottom:1px solid var(--line);font-size:0.85rem;}
 .checkbox-item:last-child{border-bottom:none;}
-.detail-panel{background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px 16px;margin-top:8px;}
+.detail-panel{background:var(--inset-bg);border:1px solid var(--inset-line);border-radius:5px;padding:14px 16px;margin-top:8px;color:var(--inset-ink);}
 .mini{font-size:0.8rem;color:var(--ink-soft);}
+.solution-box .mini, .detail-panel .mini, .diagram-box .mini{color:var(--inset-ink-soft);}
+.diagram-box{color:var(--inset-ink);}
 .close-x{position:absolute;top:14px;right:16px;cursor:pointer;color:var(--ink-soft);font-family:var(--font-mono);font-size:0.8rem;}
 #print-sheet{display:none;}
 @media print{
@@ -1064,7 +1094,7 @@ function renderQuestionBlock(q, answerState, onAnswerChange, revealed){
   box.appendChild(el(`<span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span>`));
   box.appendChild(el(`<div class="q-prompt">${esc(q.prompt)}</div>`));
   if(q.diagramSvg){
-    const dwrap=el(`<div style="background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px;margin-bottom:14px;display:flex;justify-content:center;"></div>`);
+    const dwrap=el(`<div class="diagram-box" style="background:var(--inset-bg);border:1px solid var(--inset-line);border-radius:5px;padding:14px;margin-bottom:14px;display:flex;justify-content:center;"></div>`);
     dwrap.innerHTML = q.diagramSvg;
     box.appendChild(dwrap);
   } else if(q.imageUrl){
@@ -1518,7 +1548,7 @@ function renderReference(){
             const body=el(`<div class="q-prompt" style="margin-top:8px;font-size:0.9rem;">${esc(n.content)}</div>`);
             card.appendChild(body);
             if(n.diagramSvg){
-              const dwrap=el(`<div style="background:#FBFAF6;border:1px solid var(--line);border-radius:5px;padding:14px;margin-top:8px;display:flex;justify-content:center;"></div>`);
+              const dwrap=el(`<div class="diagram-box" style="background:var(--inset-bg);border:1px solid var(--inset-line);border-radius:5px;padding:14px;margin-top:8px;display:flex;justify-content:center;"></div>`);
               dwrap.innerHTML = n.diagramSvg;
               card.appendChild(dwrap);
             }
