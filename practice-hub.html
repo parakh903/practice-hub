@@ -746,28 +746,76 @@ function renderManage(){
   }
 
   const exportCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
-    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Export everything</div>
-    <div class="mini" style="margin-bottom:10px;">Downloads all questions, tests, and reference notes as one JSON file — handy for giving a new Claude chat full context on what's already in the bank.</div>
-    <button class="btn secondary" id="export-all-btn">Download data export</button>
+    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Full backup</div>
+    <div class="mini" style="margin-bottom:10px;">Downloads everything — children, questions, tests, reference notes, and every scored result — as one JSON file. This is a real backup: if something ever gets accidentally deleted (or you just want a snapshot before a big cleanup), restore from this file below to bring it all back.</div>
+    <button class="btn secondary" id="export-all-btn">Download full backup</button>
   </div>`);
   exportCard.querySelector('#export-all-btn').addEventListener('click', ()=>{
+    const allResults = [];
+    Object.keys(state.results||{}).forEach(childId=>{
+      (state.results[childId]||[]).forEach(r=>allResults.push(r));
+    });
     const payload = {
       exportedAt: new Date().toISOString(),
+      children: state.children,
       questions: state.qbank,
       tests: state.tests,
-      reference: state.reference
+      reference: state.reference,
+      results: allResults
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `practice-hub-export-${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `practice-hub-backup-${new Date().toISOString().slice(0,10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   });
   wrap.appendChild(exportCard);
+
+  const restoreCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
+    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Restore from backup</div>
+    <div class="mini" style="margin-bottom:10px;">Loads a backup file downloaded above and writes everything in it back in. This only adds/overwrites items found in the file — it never deletes anything currently here, so it's safe to use even if today's data is fine.</div>
+    <input type="file" id="restore-file-input" accept="application/json" style="display:none;">
+    <button class="btn secondary" id="restore-pick-btn">Choose backup file…</button>
+    <span class="mini" id="restore-status" style="margin-left:10px;"></span>
+  </div>`);
+  const restoreStatus = restoreCard.querySelector('#restore-status');
+  restoreCard.querySelector('#restore-pick-btn').addEventListener('click', ()=>restoreCard.querySelector('#restore-file-input').click());
+  restoreCard.querySelector('#restore-file-input').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const counts = {children:0, questions:0, tests:0, reference:0, results:0};
+      const summary = [
+        data.children?.length ? `${data.children.length} children` : null,
+        data.questions?.length ? `${data.questions.length} questions` : null,
+        data.tests?.length ? `${data.tests.length} tests` : null,
+        data.reference?.length ? `${data.reference.length} reference notes` : null,
+        data.results?.length ? `${data.results.length} results` : null,
+      ].filter(Boolean).join(', ');
+      if(!summary){ restoreStatus.textContent='That file has no recognisable backup data.'; restoreStatus.style.color='var(--bad)'; return; }
+      if(!confirm(`Restore ${summary}?\n\nThis adds/overwrites those items — it won't delete anything currently here.`)) return;
+      restoreStatus.textContent='Restoring…'; restoreStatus.style.color='var(--ink-soft)';
+      for(const c of (data.children||[])){ const {id,...rest}=c; await db.collection('children').doc(id).set(rest); counts.children++; }
+      for(const q of (data.questions||[])){ await db.collection('qbank').doc(q.id).set(q); counts.questions++; }
+      for(const t of (data.tests||[])){ await db.collection('tests').doc(t.id).set(t); counts.tests++; }
+      for(const n of (data.reference||[])){ await db.collection('reference').doc(n.id).set(n); counts.reference++; }
+      for(const r of (data.results||[])){ const {id,...rest}=r; await db.collection('results').doc(id).set(rest); counts.results++; }
+      restoreStatus.textContent=`Restored: ${counts.children} children, ${counts.questions} questions, ${counts.tests} tests, ${counts.reference} notes, ${counts.results} results.`;
+      restoreStatus.style.color='var(--good)';
+    }catch(err){
+      console.error('Restore failed', err);
+      restoreStatus.textContent='Could not read that file — is it a Practice Hub backup JSON?';
+      restoreStatus.style.color='var(--bad)';
+    }
+    e.target.value='';
+  });
+  wrap.appendChild(restoreCard);
   }
 
   manageKeys.push('manage-children');
