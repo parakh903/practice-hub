@@ -180,6 +180,9 @@ tr.result-row:hover{background:var(--row-hover-tint);}
 .mini{font-size:0.8rem;color:var(--ink-soft);}
 .solution-box .mini, .detail-panel .mini, .diagram-box .mini{color:var(--inset-ink-soft);}
 .diagram-box{color:var(--inset-ink);}
+.solution-box .btn.secondary, .detail-panel .btn.secondary, .diagram-box .btn.secondary{
+  color:var(--inset-ink);border-color:var(--inset-ink);
+}
 .close-x{position:absolute;top:14px;right:16px;cursor:pointer;color:var(--ink-soft);font-family:var(--font-mono);font-size:0.8rem;}
 #print-sheet{display:none;}
 @media print{
@@ -2019,11 +2022,25 @@ function renderResults(){
     app.appendChild(card);
     if(expandedResults.has(r.id)){
       const panel=el(`<div class="detail-panel" style="margin-top:-8px;margin-bottom:16px;"></div>`);
-      (r.detail||[]).forEach(d=>{
-        panel.appendChild(el(`<div style="margin-bottom:10px;">
+      (r.detail||[]).forEach((d,i)=>{
+        const correctKey = state.qbank.find(q=>q.id===d.qId)?.correctAnswer;
+        const item = r.type==='test'
+          ? {resultId:r.id, kind:'test', detailIndex:i, subject:d.subject||r.subject, topic:d.topic, prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks||1, correct: d.correct!==null&&d.correct!==undefined ? d.correct : (d.selfMark==='correct'||d.selfMark==='partial'), needsReview:!!d.needsReview}
+          : {resultId:r.id, kind:'question', subject:r.subject, topic:r.topic, prompt:d.prompt, given:d.given, qId:d.qId, marks:r.marks||1, correct: r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>0), needsReview:!!r.needsReview};
+        const statusColor = item.needsReview ? 'var(--mid-text)' : (item.correct ? 'var(--good)' : 'var(--bad)');
+        const statusText = item.needsReview ? 'possible correct — needs review' : (d.correct!==null&&d.correct!==undefined ? (d.correct?'correct':'incorrect') : (d.selfMark || (item.correct?'correct':'incorrect')));
+        const row=el(`<div style="margin-bottom:12px;">
           <div style="font-size:0.85rem;"><strong>${esc((d.prompt||'').slice(0,120))}${(d.prompt||'').length>120?'…':''}</strong></div>
-          <div class="mini">Answer given: ${esc(String(d.given??'—'))} ${d.correct!==null&&d.correct!==undefined? (d.correct?' · correct':' · incorrect') : (d.selfMark? ' · '+d.selfMark : '')}</div>
-        </div>`));
+          <div class="mini">Answer given: ${esc(String(d.given??'—'))}${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
+          <div style="margin-top:6px;display:flex;gap:6px;">
+            <button class="btn secondary" data-v="correct" style="padding:3px 10px;font-size:0.72rem;">Mark correct</button>
+            <button class="btn secondary" data-v="incorrect" style="padding:3px 10px;font-size:0.72rem;">Mark wrong</button>
+          </div>
+        </div>`);
+        row.querySelectorAll('button').forEach(b=>{
+          b.addEventListener('click', (e)=>{ e.stopPropagation(); resolveReview(item, b.dataset.v); });
+        });
+        panel.appendChild(row);
       });
       app.appendChild(panel);
     }
