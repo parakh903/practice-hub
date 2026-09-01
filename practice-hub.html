@@ -246,6 +246,42 @@ let state={
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
+// Grades a numeric-answer question with some tolerance, instead of one rigid
+// string comparison. Returns 'correct' (confident auto-match — including when
+// the answer key itself lists multiple accepted values like "103.3 or 103.4"
+// and the child matched one exactly), 'review' (looks right but differs in a
+// way that's genuinely ambiguous — eg units included/omitted, or a small
+// rounding difference — so a parent should have the final say), or
+// 'incorrect' (no reasonable match at all).
+function normalizeAnswerToken(s){
+  return String(s??'').trim().toLowerCase()
+    .replace(/\s+/g,'')
+    .replace(/[$,]/g,'')
+    .replace(/(kilometres|kilometers|centimetres|centimeters|millimetres|millimeters|kilograms|milligrams|degrees|minutes|seconds|hours|km|cm|mm|kg|mg|ml|hrs|hr|min|mins|sec|secs|deg|°|%|m|g|l|s)$/,'');
+}
+function gradeNumericAnswer(given, correctAnswer){
+  const g = String(given??'').trim();
+  const c = String(correctAnswer??'').trim();
+  if(!g) return 'incorrect';
+  if(g===c) return 'correct';
+  // Answer key may list more than one accepted value: "103.3 or 103.4", "12/13", "5, 6"
+  const alts = c.split(/\s+or\s+|\/|,/i).map(x=>x.trim()).filter(Boolean);
+  if(alts.length>1 && alts.some(alt=>alt.toLowerCase()===g.toLowerCase())) return 'correct';
+  const gn = normalizeAnswerToken(g);
+  const altsToCheck = alts.length>1 ? alts : [c];
+  const altsNorm = altsToCheck.map(normalizeAnswerToken);
+  if(altsNorm.includes(gn)) return 'review'; // matches once units/case/whitespace stripped — flag, don't auto-accept
+  const gNum = parseFloat(gn);
+  for(const an of altsNorm){
+    const cNum = parseFloat(an);
+    if(!isNaN(gNum) && !isNaN(cNum)){
+      const tol = Math.max(Math.abs(cNum)*0.01, 0.05); // ~1% or a small absolute margin, whichever is bigger
+      if(Math.abs(gNum-cNum) <= tol) return 'review';
+    }
+  }
+  return 'incorrect';
+}
+
 function getRememberedChild(){
   try{ return localStorage.getItem('ph_current_child'); } catch(e){ return null; }
 }
@@ -744,7 +780,11 @@ function renderManage(){
     wrap.appendChild(el(`<div class="mini" style="margin:-10px 0 10px;">Per-child: how many unanswered questions each child has left in each subject.</div>`));
     wrap.appendChild(childLowRow);
   }
+  }
 
+  manageKeys.push('manage-backup');
+  wrap.appendChild(sectionHeader('manage-backup', 'Backup & restore'));
+  if(!collapsedSections['manage-backup']){
   const exportCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
     <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Full backup</div>
     <div class="mini" style="margin-bottom:10px;">Downloads everything — children, questions, tests, reference notes, and every scored result — as one JSON file. This is a real backup: if something ever gets accidentally deleted (or you just want a snapshot before a big cleanup), restore from this file below to bring it all back.</div>
@@ -1170,9 +1210,31 @@ function renderQuestionBlock(q, answerState, onAnswerChange, revealed){
     inp.addEventListener('input', e=>{ answerState.given=e.target.value; onAnswerChange(); });
     box.appendChild(inp);
     if(revealed){
-      const correct = String(answerState.given||'').trim() === String(q.correctAnswer).trim();
-      box.appendChild(el(`<div class="mini" style="margin-top:8px;color:${correct?'var(--good)':'var(--bad)'};font-weight:600;">
-        Correct answer: ${esc(q.correctAnswer)} — you were ${correct?'correct':'incorrect'}</div>`));
+      const grade = gradeNumericAnswer(answerState.given, q.correctAnswer);
+      if(grade==='correct'){
+        box.appendChild(el(`<div class="mini" style="margin-top:8px;color:var(--good);font-weight:600;">
+          Correct answer: ${esc(q.correctAnswer)} — you were correct</div>`));
+      } else if(grade==='review'){
+        box.appendChild(el(`<div class="mini" style="margin-top:8px;color:var(--mid-text);font-weight:600;">
+          Correct answer: ${esc(q.correctAnswer)} — close! This looks right but differs slightly (eg units, or an alternate valid form) — flagged for a parent to check.</div>`));
+      } else {
+        box.appendChild(el(`<div class="mini" style="margin-top:8px;color:var(--bad);font-weight:600;">
+          Correct answer: ${esc(q.correctAnswer)} — you were incorrect</div>`));
+        if(answerState.resultId){
+          if(answerState.disputeSent){
+            box.appendChild(el(`<div class="mini" style="margin-top:6px;color:var(--mid-text);">Flagged for a parent to check ✓</div>`));
+          } else {
+            const disputeBtn=el(`<button class="btn secondary" style="margin-top:6px;padding:4px 10px;font-size:0.75rem;">I think this should be marked correct</button>`);
+            disputeBtn.addEventListener('click', async ()=>{
+              disputeBtn.disabled=true;
+              answerState.disputeSent=true;
+              render();
+              await db.collection('results').doc(answerState.resultId).update({needsReview:true});
+            });
+            box.appendChild(disputeBtn);
+          }
+        }
+      }
     }
   } else {
     const ta=el(`<textarea placeholder="Write your response" ${revealed?'disabled':''}>${esc(answerState.given||'')}</textarea>`);
@@ -1276,15 +1338,21 @@ async function submitQuestion(){
   a.submitted=true;
   const q=a.question;
   const marks=q.marks||1;
-  let correct=null, earned=null;
+  let correct=null, earned=null, needsReview=false;
   if(q.type==='mcq'){ correct = a.selected===q.correctIndex; earned = correct?marks:0; }
-  else if(q.type==='numeric'){ correct = String(a.given||'').trim()===String(q.correctAnswer).trim(); earned = correct?marks:0; }
+  else if(q.type==='numeric'){
+    const grade = gradeNumericAnswer(a.given, q.correctAnswer);
+    needsReview = grade==='review';
+    correct = grade==='correct'; // 'review' counts as not-yet-correct until a parent confirms it
+    earned = correct?marks:0;
+  }
   const resultId=uid();
+  a.resultId = resultId; // lets the "flag as possible correct" button below update this exact doc
   const detailEntry={qId:q.id, prompt:q.prompt, given: q.type==='mcq'? (q.options[a.selected]??'(no answer)') : a.given, correct};
   const timeTakenSecs = Math.round((Date.now()-a.startedAt)/1000);
   const result={id:resultId, childId:state.currentChild, type:'question', refId:q.id, subject:q.subject, topic:q.topic,
     date:Date.now(), autoCorrect:correct, selfMark:null, marks, earned, detail:[detailEntry],
-    timeTakenSecs, expectedMinutes:q.timeMinutes||2};
+    timeTakenSecs, expectedMinutes:q.timeMinutes||2, needsReview, reviewResolved:null};
   render();
   await db.collection('results').doc(resultId).set(result);
   // hook to capture selfMark for written type after user picks it
@@ -1311,7 +1379,7 @@ async function submitTest(){
   a.questions.forEach((q,i)=>{
     const marks=q.marks||1;
     if(q.type==='mcq'){ autoMax+=marks; if(a.answers[i].selected===q.correctIndex) autoScore+=marks; }
-    else if(q.type==='numeric'){ autoMax+=marks; if(String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim()) autoScore+=marks; }
+    else if(q.type==='numeric'){ autoMax+=marks; if(gradeNumericAnswer(a.answers[i].given, q.correctAnswer)==='correct') autoScore+=marks; }
     else hasWritten=true;
   });
   a.autoScore=autoScore; a.autoMax=autoMax; a.hasWritten=hasWritten;
@@ -1322,12 +1390,16 @@ async function finalizeTestSelfMarks(){
   const a=state.activeAttempt;
   if(!a || a.type!=='test') return;
   const detail=a.questions.map((q,i)=>{
-    let correct=null;
+    let correct=null, needsReview=false;
     if(q.type==='mcq') correct=a.answers[i].selected===q.correctIndex;
-    else if(q.type==='numeric') correct=String(a.answers[i].given||'').trim()===String(q.correctAnswer).trim();
+    else if(q.type==='numeric'){
+      const grade = gradeNumericAnswer(a.answers[i].given, q.correctAnswer);
+      needsReview = grade==='review';
+      correct = grade==='correct';
+    }
     return {qId:q.id, prompt:q.prompt, subject:q.subject, topic:q.topic||'', marks:q.marks||1,
       given: q.type==='mcq'? (q.options[a.answers[i].selected]??'(no answer)') : a.answers[i].given,
-      correct, selfMark:a.answers[i].selfMark||null};
+      correct, selfMark:a.answers[i].selfMark||null, needsReview, reviewResolved:null};
   });
   const writtenMarksEarned = detail
     .filter(d=>d.selfMark)
@@ -1619,6 +1691,51 @@ function pctOf(r){
   }
 }
 
+async function resolveReview(item, decision){
+  const isCorrect = decision==='correct';
+  if(item.kind==='question'){
+    await db.collection('results').doc(item.resultId).update({
+      autoCorrect: isCorrect,
+      earned: isCorrect ? item.marks : 0,
+      needsReview: false,
+      reviewResolved: decision
+    });
+  } else {
+    const ref = db.collection('results').doc(item.resultId);
+    const snap = await ref.get();
+    if(!snap.exists) return;
+    const data = snap.data();
+    const detail = (data.detail||[]).slice();
+    detail[item.detailIndex] = {...detail[item.detailIndex], correct:isCorrect, needsReview:false, reviewResolved:decision};
+    const newScore = detail.reduce((s,d)=>{
+      if(d.correct!==null && d.correct!==undefined) return s + (d.correct? d.marks:0);
+      if(d.selfMark) return s + (d.selfMark==='correct'? d.marks : d.selfMark==='partial'? d.marks/2 : 0);
+      return s;
+    },0);
+    await ref.update({detail, score:newScore});
+  }
+}
+
+let expandedTopics={};
+
+function renderAnswerItemRow(item){
+  const correctKey = state.qbank.find(q=>q.id===item.qId)?.correctAnswer;
+  const statusColor = item.needsReview ? 'var(--mid-text)' : (item.correct ? 'var(--good)' : 'var(--bad)');
+  const statusText = item.needsReview ? 'Possible correct — needs review' : (item.correct ? 'Correct' : 'Incorrect');
+  const row=el(`<div style="padding:8px 0;border-bottom:1px solid var(--line);">
+    <div style="font-size:0.85rem;">${esc(item.prompt||'(question text unavailable)')}${item.kind==='test'?` <span class="mini">— ${esc(item.testTitle)}</span>`:''}</div>
+    <div class="mini" style="margin-top:2px;">Given: <strong>${esc(String(item.given))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
+    <div style="margin-top:6px;display:flex;gap:6px;">
+      <button class="btn secondary" data-v="correct" style="padding:3px 10px;font-size:0.72rem;">Mark correct</button>
+      <button class="btn secondary" data-v="incorrect" style="padding:3px 10px;font-size:0.72rem;">Mark wrong</button>
+    </div>
+  </div>`);
+  row.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', (e)=>{ e.stopPropagation(); resolveReview(item, b.dataset.v); });
+  });
+  return row;
+}
+
 function renderResults(){
   const app=document.getElementById('app');
   if(!state.currentChild){
@@ -1688,6 +1805,47 @@ function renderResults(){
   const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
   const list = allList.filter(r=>passesFilter(r.subject));
 
+  // ---- Needs review: numeric answers the auto-grader flagged as "close but
+  // not an exact match" (units included/omitted, a small rounding gap, or a
+  // format the answer key didn't anticipate) rather than confidently marking
+  // right or wrong — plus anything a child manually disputed. Nothing here
+  // has been scored as correct yet; a parent has the final call. ----
+  const reviewItems=[];
+  list.forEach(r=>{
+    if(r.type==='question' && r.needsReview && !r.reviewResolved){
+      reviewItems.push({resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
+        prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:r.marks});
+    } else if(r.type==='test'){
+      (r.detail||[]).forEach((d,i)=>{
+        if(d.needsReview && !d.reviewResolved){
+          reviewItems.push({resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
+            prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks, testTitle:r.title});
+        }
+      });
+    }
+  });
+  if(reviewItems.length){
+    app.appendChild(sectionHeader('results-needsreview', `⚠ Possible correct — needs review (${reviewItems.length})`));
+    if(!collapsedSections['results-needsreview']){
+      reviewItems.forEach(item=>{
+        const correctKey = state.qbank.find(q=>q.id===item.qId)?.correctAnswer;
+        const card=el(`<div class="card subj-${item.subject}" style="padding:12px 16px;">
+          <span class="tag ${item.subject}">${item.subject}</span><span class="tag diff">${esc(item.topic||'')}</span>${item.kind==='test'?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}
+          <div style="margin:6px 0;font-size:0.9rem;">${esc(item.prompt||'')}</div>
+          <div class="mini">Given answer: <strong>${esc(String(item.given))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''}</div>
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <button class="btn secondary" data-v="correct" style="padding:5px 12px;font-size:0.78rem;">Mark correct</button>
+            <button class="btn secondary" data-v="incorrect" style="padding:5px 12px;font-size:0.78rem;">Mark wrong</button>
+          </div>
+        </div>`);
+        card.querySelectorAll('button').forEach(b=>{
+          b.addEventListener('click', ()=>resolveReview(item, b.dataset.v));
+        });
+        app.appendChild(card);
+      });
+    }
+  }
+
   // Collects every section key actually rendered below (test history / by topic /
   // still to do / done), so one control can expand or collapse the whole tab at
   // once. getKeys() is only called when the button is clicked — by then this
@@ -1725,25 +1883,38 @@ function renderResults(){
 
   // By topic — weakest first, combines standalone questions AND questions inside completed tests
   const topicStats = {};
+  const topicItemsMap = {};
   function addToTopic(topic, subject, earned, total){
     if(!topic) return;
     if(!topicStats[topic]) topicStats[topic]={earned:0,total:0,subject};
     topicStats[topic].earned+=earned; topicStats[topic].total+=total;
   }
+  function addTopicItem(topic, item){
+    if(!topic) return;
+    if(!topicItemsMap[topic]) topicItemsMap[topic]=[];
+    topicItemsMap[topic].push(item);
+  }
   list.filter(r=>r.type==='question' && r.topic).forEach(r=>{
     const p = pctOf(r);
     if(p===null) return;
     const m=r.marks||1;
+    const isCorrect = r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>=m);
     const earned = r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0);
     addToTopic(r.topic, r.subject, earned, m);
+    addTopicItem(r.topic, {resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
+      prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:m,
+      correct:isCorrect, needsReview:!!r.needsReview, date:r.date});
   });
   list.filter(r=>r.type==='test').forEach(r=>{
-    (r.detail||[]).forEach(d=>{
+    (r.detail||[]).forEach((d,i)=>{
       if(!d.topic) return; // older tests taken before topic-tracking was added won't have this
       const m=d.marks||1;
       const earned = d.correct!==null && d.correct!==undefined ? (d.correct?m:0) : (d.selfMark==='correct'?m : d.selfMark==='partial'?m/2 : d.selfMark==='incorrect'?0 : null);
       if(earned===null) return;
+      const isCorrect = d.correct!==null && d.correct!==undefined ? d.correct : (d.selfMark==='correct' || d.selfMark==='partial');
       addToTopic(d.topic, d.subject, earned, m);
+      addTopicItem(d.topic, {resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
+        prompt:d.prompt, given:d.given, qId:d.qId, marks:m, correct:isCorrect, needsReview:!!d.needsReview, date:r.date, testTitle:r.title});
     });
   });
   const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
@@ -1753,10 +1924,20 @@ function renderResults(){
     if(!collapsedSections['results-bytopic']){
     const topicCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
     topicRows.forEach(t=>{
-      topicCard.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);">
-        <div><span class="tag ${t.subject}">${t.subject}</span> ${esc(t.topic)}</div>
+      const topicKey='results-topic-'+t.topic;
+      const items = (topicItemsMap[t.topic]||[]).sort((a,b)=>b.date-a.date);
+      const topicOpen = !!expandedTopics[t.topic];
+      const rowHead=el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;">
+        <div><span style="display:inline-block;transition:transform .15s;transform:rotate(${topicOpen?'0':'-90'}deg);margin-right:4px;">▾</span><span class="tag ${t.subject}">${t.subject}</span> ${esc(t.topic)} <span class="mini">(${items.length} question${items.length===1?'':'s'})</span></div>
         <span class="score-pill ${scoreLabel(t.pct)}">${t.earned}/${t.total}</span>
-      </div>`));
+      </div>`);
+      rowHead.addEventListener('click', ()=>{ expandedTopics[t.topic]=!expandedTopics[t.topic]; render(); });
+      topicCard.appendChild(rowHead);
+      if(topicOpen){
+        const itemsWrap=el(`<div style="padding:4px 0 8px 20px;"></div>`);
+        items.forEach(item=>itemsWrap.appendChild(renderAnswerItemRow(item)));
+        topicCard.appendChild(itemsWrap);
+      }
     });
     topicCard.lastChild.style.borderBottom='none';
     app.appendChild(topicCard);
