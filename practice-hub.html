@@ -1351,7 +1351,8 @@ async function submitQuestion(){
   }
   const resultId=uid();
   a.resultId = resultId; // lets the "flag as possible correct" button below update this exact doc
-  const detailEntry={qId:q.id, prompt:q.prompt, given: q.type==='mcq'? (q.options[a.selected]??'(no answer)') : a.given, correct};
+  const detailEntry={qId:q.id, prompt:q.prompt, given: q.type==='mcq'? (q.options[a.selected]??'(no answer)') : a.given, correct,
+    correctAnswer: q.type==='mcq' ? (q.options[q.correctIndex]??null) : (q.correctAnswer??null), solution: q.solution??null};
   const timeTakenSecs = Math.round((Date.now()-a.startedAt)/1000);
   const result={id:resultId, childId:state.currentChild, type:'question', refId:q.id, subject:q.subject, topic:q.topic,
     date:Date.now(), autoCorrect:correct, selfMark:null, marks, earned, detail:[detailEntry],
@@ -1402,7 +1403,8 @@ async function finalizeTestSelfMarks(){
     }
     return {qId:q.id, prompt:q.prompt, subject:q.subject, topic:q.topic||'', marks:q.marks||1,
       given: q.type==='mcq'? (q.options[a.answers[i].selected]??'(no answer)') : a.answers[i].given,
-      correct, selfMark:a.answers[i].selfMark||null, needsReview, reviewResolved:null};
+      correct, selfMark:a.answers[i].selfMark||null, needsReview, reviewResolved:null,
+      correctAnswer: q.type==='mcq' ? (q.options[q.correctIndex]??null) : (q.correctAnswer??null), solution: q.solution??null};
   });
   const writtenMarksEarned = detail
     .filter(d=>d.selfMark)
@@ -1723,14 +1725,17 @@ let expandedTopics={};
 
 function renderAnswerItemRow(item){
   const bankQ = state.qbank.find(q=>q.id===item.qId);
-  const correctKey = bankQ?.correctAnswer;
-  const solution = bankQ?.solution;
+  const correctKey = item.correctAnswer ?? bankQ?.correctAnswer;
+  const solution = item.solution ?? bankQ?.solution;
+  const notFound = !bankQ && item.correctAnswer==null && item.solution==null;
   const statusColor = item.needsReview ? 'var(--mid-text)' : (item.correct ? 'var(--good)' : 'var(--bad)');
   const statusText = item.needsReview ? 'Possible correct — needs review' : (item.correct ? 'Correct' : 'Incorrect');
   const row=el(`<div style="padding:8px 0;border-bottom:1px solid var(--line);">
-    <div style="font-size:0.85rem;">${esc(item.prompt||'(question text unavailable)')}${item.kind==='test'?` <span class="mini">— ${esc(item.testTitle)}</span>`:''}</div>
+    <div>${item.subject?`<span class="tag ${item.subject}">${item.subject}</span>`:''}${item.topic?`<span class="tag diff">${esc(item.topic)}</span>`:''}${item.kind==='test'&&item.testTitle?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}</div>
+    <div style="font-size:0.85rem;margin-top:4px;">${esc(item.prompt||'(question text unavailable)')}</div>
     <div class="mini" style="margin-top:2px;">Given: <strong>${esc(String(item.given))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
     ${solution?`<div class="solution-box" style="margin-top:8px;padding:10px 12px;"><div class="lbl">Worked solution</div>${esc(solution)}</div>`:''}
+    ${notFound?`<div class="mini" style="margin-top:6px;color:var(--mid-text);">Original question no longer in the bank (edited or deleted since) — no saved answer key for this one. Use your own judgement below.</div>`:''}
     <div style="margin-top:6px;display:flex;gap:6px;">
       <button class="btn secondary" data-v="correct" style="padding:3px 10px;font-size:0.72rem;">Mark correct</button>
       <button class="btn secondary" data-v="incorrect" style="padding:3px 10px;font-size:0.72rem;">Mark wrong</button>
@@ -1820,12 +1825,14 @@ function renderResults(){
   list.forEach(r=>{
     if(r.type==='question' && r.needsReview && !r.reviewResolved){
       reviewItems.push({resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
-        prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:r.marks});
+        prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:r.marks,
+        correct:false, needsReview:true, correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution});
     } else if(r.type==='test'){
       (r.detail||[]).forEach((d,i)=>{
         if(d.needsReview && !d.reviewResolved){
           reviewItems.push({resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
-            prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks, testTitle:r.title});
+            prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks, testTitle:r.title,
+            correct:false, needsReview:true, correctAnswer:d.correctAnswer, solution:d.solution});
         }
       });
     }
@@ -1833,22 +1840,10 @@ function renderResults(){
   if(reviewItems.length){
     app.appendChild(sectionHeader('results-needsreview', `⚠ Possible correct — needs review (${reviewItems.length})`));
     if(!collapsedSections['results-needsreview']){
-      reviewItems.forEach(item=>{
-        const correctKey = state.qbank.find(q=>q.id===item.qId)?.correctAnswer;
-        const card=el(`<div class="card subj-${item.subject}" style="padding:12px 16px;">
-          <span class="tag ${item.subject}">${item.subject}</span><span class="tag diff">${esc(item.topic||'')}</span>${item.kind==='test'?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}
-          <div style="margin:6px 0;font-size:0.9rem;">${esc(item.prompt||'')}</div>
-          <div class="mini">Given answer: <strong>${esc(String(item.given))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''}</div>
-          <div style="margin-top:8px;display:flex;gap:8px;">
-            <button class="btn secondary" data-v="correct" style="padding:5px 12px;font-size:0.78rem;">Mark correct</button>
-            <button class="btn secondary" data-v="incorrect" style="padding:5px 12px;font-size:0.78rem;">Mark wrong</button>
-          </div>
-        </div>`);
-        card.querySelectorAll('button').forEach(b=>{
-          b.addEventListener('click', ()=>resolveReview(item, b.dataset.v));
-        });
-        app.appendChild(card);
-      });
+      const queueCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
+      reviewItems.forEach(item=>queueCard.appendChild(renderAnswerItemRow(item)));
+      queueCard.lastChild.style.borderBottom='none';
+      app.appendChild(queueCard);
     }
   }
 
@@ -1909,7 +1904,8 @@ function renderResults(){
     addToTopic(r.topic, r.subject, earned, m);
     addTopicItem(r.topic, {resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
       prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:m,
-      correct:isCorrect, needsReview:!!r.needsReview, date:r.date});
+      correct:isCorrect, needsReview:!!r.needsReview, date:r.date,
+      correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution});
   });
   list.filter(r=>r.type==='test').forEach(r=>{
     (r.detail||[]).forEach((d,i)=>{
@@ -1920,7 +1916,8 @@ function renderResults(){
       const isCorrect = d.correct!==null && d.correct!==undefined ? d.correct : (d.selfMark==='correct' || d.selfMark==='partial');
       addToTopic(d.topic, d.subject, earned, m);
       addTopicItem(d.topic, {resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
-        prompt:d.prompt, given:d.given, qId:d.qId, marks:m, correct:isCorrect, needsReview:!!d.needsReview, date:r.date, testTitle:r.title});
+        prompt:d.prompt, given:d.given, qId:d.qId, marks:m, correct:isCorrect, needsReview:!!d.needsReview, date:r.date, testTitle:r.title,
+        correctAnswer:d.correctAnswer, solution:d.solution});
     });
   });
   const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
@@ -1993,8 +1990,8 @@ function renderResults(){
     if(expandedResults.has(r.id)){
       const panel=el(`<div class="detail-panel" style="margin-top:-8px;margin-bottom:16px;"></div>`);
       (r.detail||[]).forEach((d,i)=>{
-        const correctKey = state.qbank.find(q=>q.id===d.qId)?.correctAnswer;
-        const solution = state.qbank.find(q=>q.id===d.qId)?.solution;
+        const correctKey = d.correctAnswer ?? state.qbank.find(q=>q.id===d.qId)?.correctAnswer;
+        const solution = d.solution ?? state.qbank.find(q=>q.id===d.qId)?.solution;
         const item = r.type==='test'
           ? {resultId:r.id, kind:'test', detailIndex:i, subject:d.subject||r.subject, topic:d.topic, prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks||1, correct: d.correct!==null&&d.correct!==undefined ? d.correct : (d.selfMark==='correct'||d.selfMark==='partial'), needsReview:!!d.needsReview}
           : {resultId:r.id, kind:'question', subject:r.subject, topic:r.topic, prompt:d.prompt, given:d.given, qId:d.qId, marks:r.marks||1, correct: r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>0), needsReview:!!r.needsReview};
