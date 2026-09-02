@@ -1747,6 +1747,25 @@ function renderAnswerItemRow(item){
   return row;
 }
 
+let expandedTodoAnswers=new Set();
+
+function renderTodoQuestionDetail(obj){
+  const wrap=el(`<div></div>`);
+  const shown = expandedTodoAnswers.has(obj.id);
+  const toggleBtn=el(`<button class="btn secondary" style="margin-top:6px;padding:3px 10px;font-size:0.72rem;">${shown?'Hide answer & solution':'Show answer & solution'}</button>`);
+  toggleBtn.addEventListener('click', ()=>{
+    if(expandedTodoAnswers.has(obj.id)) expandedTodoAnswers.delete(obj.id); else expandedTodoAnswers.add(obj.id);
+    render();
+  });
+  wrap.appendChild(toggleBtn);
+  if(shown){
+    const key = obj.type==='mcq' ? (obj.options?.[obj.correctIndex] ?? null) : (obj.correctAnswer ?? null);
+    wrap.appendChild(el(`<div class="mini" style="margin-top:6px;">${key?`Answer key: <strong>${esc(key)}</strong>`:'(no single answer key — self-marked from the guide below)'}</div>`));
+    if(obj.solution) wrap.appendChild(el(`<div class="solution-box" style="margin-top:6px;padding:10px 12px;"><div class="lbl">Worked solution</div>${esc(obj.solution)}</div>`));
+  }
+  return wrap;
+}
+
 function renderResults(){
   const app=document.getElementById('app');
   if(!state.currentChild){
@@ -2034,17 +2053,39 @@ function renderResults(){
     if(!collapsedSections['results-stilltodo']){
     todoItems.forEach(({kind,obj})=>{
       if(kind==='test'){
-        app.appendChild(el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.8;">
+        const testKey='stilltodo-test-'+obj.id;
+        const testOpen = expandedTodoAnswers.has(testKey);
+        const card=el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.9;">
           <span class="tag ${obj.subject}">${obj.subject}</span><span class="tag diff">Test</span>
           <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.title)}</div>
           <div class="mini" style="margin-top:3px;">posted ${formatDate(obj.createdAt)}</div>
-        </div>`));
+        </div>`);
+        const revealBtn=el(`<button class="btn secondary" style="margin-top:6px;padding:3px 10px;font-size:0.72rem;">${testOpen?'Hide questions':'Show questions, answers & solutions'}</button>`);
+        revealBtn.addEventListener('click', ()=>{
+          if(expandedTodoAnswers.has(testKey)) expandedTodoAnswers.delete(testKey); else expandedTodoAnswers.add(testKey);
+          render();
+        });
+        card.appendChild(revealBtn);
+        if(testOpen){
+          (obj.questionIds||[]).forEach(qid=>{
+            const q = state.qbank.find(x=>x.id===qid);
+            if(!q) return;
+            const qBox=el(`<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+              <div style="font-size:0.85rem;">${esc(q.prompt)}</div>
+            </div>`);
+            qBox.appendChild(renderTodoQuestionDetail(q));
+            card.appendChild(qBox);
+          });
+        }
+        app.appendChild(card);
       } else {
-        app.appendChild(el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.8;">
+        const card=el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.9;">
           <span class="tag ${obj.subject}">${obj.subject}</span><span class="tag diff">Question</span>
-          <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.topic)||'(no topic)'} — ${esc(obj.prompt.slice(0,80))}${obj.prompt.length>80?'…':''}</div>
+          <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.topic)||'(no topic)'} — ${esc(obj.prompt)}</div>
           <div class="mini" style="margin-top:3px;">posted ${formatDate(obj.createdAt)}</div>
-        </div>`));
+        </div>`);
+        card.appendChild(renderTodoQuestionDetail(obj));
+        app.appendChild(card);
       }
     });
     }
