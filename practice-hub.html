@@ -485,7 +485,7 @@ function triggerAllBackups(){
     const dummyBtn = document.createElement('button'); // detached — downloadReferencePdf only needs disabled/textContent
     dummyBtn.textContent = 'Save as PDF';
     downloadReferencePdf(dummyBtn);
-  }, 350);
+  }, 2500); // long enough to notice/handle the JSON download before the PDF opens and takes over the tab
   markBackupDone();
 }
 function renderBackupBanner(){
