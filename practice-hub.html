@@ -465,7 +465,10 @@ function exportFullBackupJson(){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // Delay the revoke — iOS Safari handles the download asynchronously, and
+  // revoking the blob URL immediately can race ahead of it and silently kill
+  // the download with no visible error.
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
 }
 // Fires every existing export/backup format at once (currently: full JSON backup
 // + the Reference PDF), staggered by a few hundred ms so mobile Safari/Chrome
