@@ -211,7 +211,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
-const loadedFlags = {children:false, qbank:false, tests:false, results:false, reference:false};
+const loadedFlags = {children:false, qbank:false, tests:false, results:false, reference:false, backupSettings:false};
 function markLoaded(key){
   loadedFlags[key]=true;
   if(Object.values(loadedFlags).every(Boolean)) state.loaded=true;
@@ -244,7 +244,11 @@ let state={
   refSearch:'',
   refBulkText:'',
   refBulkMsg:'',
-  refFormError:''
+  refFormError:'',
+  // Backup reminder settings — shared/family-wide like everything else in Firestore,
+  // not per-device localStorage, since "have we backed up" and "how do we want to
+  // be reminded" are facts about the family's data, not about any one phone.
+  backupSettings: {mode:'monthly', dayOfMonth:1, intervalDays:14, lastBackupDate:null, backupDismissedDate:null}
 };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -341,6 +345,13 @@ function initListeners(){
     markLoaded('results');
     render();
   }, err=>console.error('results listener error', err));
+
+  db.collection('meta').doc('backupSettings').onSnapshot(doc=>{
+    const defaults = {mode:'monthly', dayOfMonth:1, intervalDays:14, lastBackupDate:null, backupDismissedDate:null};
+    state.backupSettings = doc.exists ? Object.assign({}, defaults, doc.data()) : defaults;
+    markLoaded('backupSettings');
+    render();
+  }, err=>{ console.error('backupSettings listener error', err); markLoaded('backupSettings'); render(); });
 }
 
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; }
@@ -392,6 +403,106 @@ function buildAddChildControl(style){
   cancelBtn.addEventListener('click', ()=>{ state.addingChild=false; render(); });
   setTimeout(()=>input.focus(),0);
   return wrap;
+}
+
+// ---------- BACKUP REMINDER ----------
+function todayISODate(){ return new Date().toISOString().slice(0,10); } // 'YYYY-MM-DD', local download-day granularity is fine here
+function isSameMonth(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth(); }
+
+// Whether a backup is currently "due", based on the chosen reminder mode.
+// Monthly: due once we've reached the picked day-of-month AND no backup has
+// happened yet this calendar month (so an early-month backup satisfies the
+// month even if it landed before the picked day — the point is "did we back
+// up this month", not "did we hit this exact date").
+// Every-few-days: due once that many days have elapsed since the last actual
+// backup download (not since the app was last opened).
+function isBackupDue(){
+  const bs = state.backupSettings;
+  if(!bs) return false;
+  const last = bs.lastBackupDate ? new Date(bs.lastBackupDate+'T00:00:00') : null;
+  const now = new Date();
+  if(bs.mode==='days'){
+    const interval = Math.max(1, Number(bs.intervalDays)||14);
+    if(!last) return true;
+    const diffDays = Math.floor((now-last)/86400000);
+    return diffDays >= interval;
+  }
+  // monthly
+  const dom = Math.min(31, Math.max(1, Number(bs.dayOfMonth)||1));
+  if(!last) return now.getDate() >= dom;
+  if(isSameMonth(last, now)) return false;
+  return now.getDate() >= dom;
+}
+function shouldShowBackupBanner(){
+  const bs = state.backupSettings;
+  if(!bs || !isBackupDue()) return false;
+  return bs.backupDismissedDate !== todayISODate();
+}
+function saveBackupSettings(patch){
+  return db.collection('meta').doc('backupSettings').set(patch, {merge:true}).catch(err=>console.error('Failed to save backup settings', err));
+}
+function markBackupDone(){
+  saveBackupSettings({lastBackupDate: todayISODate()});
+}
+function exportFullBackupJson(){
+  const allResults = [];
+  Object.keys(state.results||{}).forEach(childId=>{
+    (state.results[childId]||[]).forEach(r=>allResults.push(r));
+  });
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    children: state.children,
+    questions: state.qbank,
+    tests: state.tests,
+    reference: state.reference,
+    results: allResults
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `practice-hub-backup-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+// Fires every existing export/backup format at once (currently: full JSON backup
+// + the Reference PDF), staggered by a few hundred ms so mobile Safari/Chrome
+// don't treat the second triggered download as a blocked popup.
+function triggerAllBackups(){
+  exportFullBackupJson();
+  setTimeout(()=>{
+    const dummyBtn = document.createElement('button'); // detached — downloadReferencePdf only needs disabled/textContent
+    dummyBtn.textContent = 'Save as PDF';
+    downloadReferencePdf(dummyBtn);
+  }, 350);
+  markBackupDone();
+}
+function renderBackupBanner(){
+  if(!shouldShowBackupBanner()) return null;
+  const bs = state.backupSettings;
+  const lastLine = bs.lastBackupDate
+    ? `It's been a while since your last backup (${formatDate(new Date(bs.lastBackupDate+'T00:00:00').getTime())}).`
+    : `You haven't downloaded a backup yet.`;
+  const banner = el(`<div class="card" style="border-left:5px solid var(--mid-text);background:var(--mid-bg);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 18px;margin-bottom:20px;">
+    <div style="flex:1;min-width:220px;">
+      <div style="font-family:var(--font-mono);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--mid-text);margin-bottom:4px;">⏰ Backup reminder</div>
+      <div style="font-size:0.9rem;">${lastLine} Grab a fresh copy of everything.</div>
+    </div>
+    <div style="display:flex;gap:8px;flex:0 0 auto;">
+      <button class="btn" id="backup-banner-download">Download now</button>
+      <button class="btn secondary" id="backup-banner-dismiss">Not now</button>
+    </div>
+  </div>`);
+  banner.querySelector('#backup-banner-download').addEventListener('click', (e)=>{
+    e.currentTarget.disabled=true; e.currentTarget.textContent='Downloading…';
+    triggerAllBackups();
+  });
+  banner.querySelector('#backup-banner-dismiss').addEventListener('click', ()=>{
+    saveBackupSettings({backupDismissedDate: todayISODate()});
+  });
+  return banner;
 }
 
 // ---------- QUESTION BANK ----------
@@ -794,27 +905,8 @@ function renderManage(){
     <button class="btn secondary" id="export-all-btn">Download full backup</button>
   </div>`);
   exportCard.querySelector('#export-all-btn').addEventListener('click', ()=>{
-    const allResults = [];
-    Object.keys(state.results||{}).forEach(childId=>{
-      (state.results[childId]||[]).forEach(r=>allResults.push(r));
-    });
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      children: state.children,
-      questions: state.qbank,
-      tests: state.tests,
-      reference: state.reference,
-      results: allResults
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `practice-hub-backup-${new Date().toISOString().slice(0,10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    exportFullBackupJson();
+    markBackupDone();
   });
   wrap.appendChild(exportCard);
 
@@ -859,6 +951,56 @@ function renderManage(){
     e.target.value='';
   });
   wrap.appendChild(restoreCard);
+  }
+
+  manageKeys.push('manage-backupreminders');
+  wrap.appendChild(sectionHeader('manage-backupreminders', 'Backup reminders'));
+  if(!collapsedSections['manage-backupreminders']){
+  const bs = state.backupSettings || {mode:'monthly', dayOfMonth:1, intervalDays:14, lastBackupDate:null, backupDismissedDate:null};
+  const remCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
+    <div class="mini" style="margin-bottom:12px;">
+      ${bs.lastBackupDate ? `Last backup downloaded: <strong style="color:var(--ink);">${formatDate(new Date(bs.lastBackupDate+'T00:00:00').getTime())}</strong>.` : `No backup recorded yet.`}
+      A dismissible reminder banner appears at the top of the app when it's time — the "Download now" button on it grabs the full JSON backup and the reference PDF together.
+    </div>
+    <label class="field">Remind me</label>
+    <div class="row" id="backup-mode-row" style="margin-bottom:12px;"></div>
+    <div id="backup-mode-detail"></div>
+  </div>`);
+  const modeRow = remCard.querySelector('#backup-mode-row');
+  modeRow.style.display='flex'; modeRow.style.gap='8px';
+  const modeDetail = remCard.querySelector('#backup-mode-detail');
+  [['monthly','Monthly'],['days','Every few days']].forEach(([id,label])=>{
+    const chip=el(`<div class="chip ${bs.mode===id?'active':''}" style="flex:0 0 auto;">${label}</div>`);
+    chip.addEventListener('click', ()=>{ if(bs.mode!==id) saveBackupSettings({mode:id}); });
+    modeRow.appendChild(chip);
+  });
+  if(bs.mode==='days'){
+    const daysWrap=el(`<div style="max-width:220px;">
+      <label class="field">Days since last backup</label>
+      <input type="number" min="1" max="365" id="backup-interval-input" value="${bs.intervalDays||14}">
+    </div>`);
+    daysWrap.querySelector('#backup-interval-input').addEventListener('change', (e)=>{
+      const v=Math.max(1, Math.min(365, parseInt(e.target.value,10)||14));
+      e.target.value=v;
+      saveBackupSettings({intervalDays:v});
+    });
+    modeDetail.appendChild(daysWrap);
+  } else {
+    const domWrap=el(`<div style="max-width:220px;">
+      <label class="field">Day of month</label>
+      <select id="backup-dom-input"></select>
+    </div>`);
+    const select=domWrap.querySelector('#backup-dom-input');
+    for(let d=1; d<=31; d++){
+      const opt=document.createElement('option');
+      opt.value=d; opt.textContent=d;
+      if((bs.dayOfMonth||1)===d) opt.selected=true;
+      select.appendChild(opt);
+    }
+    select.addEventListener('change', ()=>saveBackupSettings({dayOfMonth:parseInt(select.value,10)}));
+    modeDetail.appendChild(domWrap);
+  }
+  wrap.appendChild(remCard);
   }
 
   manageKeys.push('manage-children');
@@ -1550,6 +1692,7 @@ async function downloadReferencePdf(btn){
       y += 8;
     }
     pdf.save('practice-hub-reference.pdf');
+    markBackupDone();
   }catch(err){
     console.error('PDF generation failed', err);
     alert('Something went wrong building the PDF. Please try again.');
@@ -2110,6 +2253,9 @@ function render(){
       <h1>Practice Hub</h1>
       <div class="tagline">extension practice · year 8 → hsc</div>
     </header>`));
+
+  const backupBanner = renderBackupBanner();
+  if(backupBanner) app.appendChild(backupBanner);
 
   const nav=el(`<nav class="tabs"></nav>`);
   [['practice','Practice'],['results','Results'],['reference','Reference'],['manage','Manage']].forEach(([id,label])=>{
