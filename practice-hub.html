@@ -908,20 +908,9 @@ function renderManage(){
   manageKeys.push('manage-backup');
   wrap.appendChild(sectionHeader('manage-backup', 'Backup & restore'));
   if(!collapsedSections['manage-backup']){
-  const exportCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
-    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Full backup</div>
-    <div class="mini" style="margin-bottom:10px;">Downloads everything — children, questions, tests, reference notes, and every scored result — as one JSON file. This is a real backup: if something ever gets accidentally deleted (or you just want a snapshot before a big cleanup), restore from this file below to bring it all back.</div>
-    <button class="btn secondary" id="export-all-btn">Download full backup</button>
-  </div>`);
-  exportCard.querySelector('#export-all-btn').addEventListener('click', ()=>{
-    exportFullBackupJson();
-    markBackupDone();
-  });
-  wrap.appendChild(exportCard);
-
   const restoreCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
     <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Restore from backup</div>
-    <div class="mini" style="margin-bottom:10px;">Loads a backup file downloaded above and writes everything in it back in. This only adds/overwrites items found in the file — it never deletes anything currently here, so it's safe to use even if today's data is fine.</div>
+    <div class="mini" style="margin-bottom:10px;">Loads a JSON backup file (downloaded via "Download both now" in Backup reminders below) and writes everything in it back in. This only adds/overwrites items found in the file — it never deletes anything currently here, so it's safe to use even if today's data is fine.</div>
     <input type="file" id="restore-file-input" accept="application/json" style="display:none;">
     <button class="btn secondary" id="restore-pick-btn">Choose backup file…</button>
     <span class="mini" id="restore-status" style="margin-left:10px;"></span>
@@ -969,7 +958,7 @@ function renderManage(){
   const remCard=el(`<div class="card" style="padding:14px 16px;margin-bottom:20px;">
     <div class="mini" style="margin-bottom:12px;">
       ${bs.lastBackupDate ? `Last backup downloaded: <strong style="color:var(--ink);">${formatDate(new Date(bs.lastBackupDate+'T00:00:00').getTime())}</strong>.` : `No backup recorded yet.`}
-      A dismissible reminder banner appears at the top of the app when it's time — the "Download now" button on it grabs the full JSON backup and the reference PDF together.
+      A dismissible reminder banner appears at the top of the app when it's time. Either way, the "Download both now" button below grabs the full JSON backup — the real one, with children, questions, tests, notes, and every result — plus the reference PDF, together.
     </div>
     <label class="field">Remind me</label>
     <div class="row" id="backup-mode-row" style="margin-bottom:12px;"></div>
