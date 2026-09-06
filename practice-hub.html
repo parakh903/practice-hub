@@ -457,18 +457,24 @@ function exportFullBackupJson(){
     reference: state.reference,
     results: allResults
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  // application/octet-stream (not application/json) — iOS Safari has no native
+  // viewer for JSON, so a JSON-typed blob silently does nothing when "downloaded"
+  // via a programmatic click instead of prompting a save. Marking it as a generic
+  // binary stream forces Safari to actually save the file.
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/octet-stream'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = `practice-hub-backup-${new Date().toISOString().slice(0,10)}.json`;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  // Delay the revoke — iOS Safari handles the download asynchronously, and
-  // revoking the blob URL immediately can race ahead of it and silently kill
-  // the download with no visible error.
-  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  // Delay both cleanup steps — iOS Safari handles the download asynchronously,
+  // and tearing down the anchor or revoking the blob URL immediately can race
+  // ahead of it and silently kill the download with no visible error.
+  setTimeout(()=>{
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 2000);
 }
 // Fires every existing export/backup format at once (currently: full JSON backup
 // + the Reference PDF), staggered by a few hundred ms so mobile Safari/Chrome
