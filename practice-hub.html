@@ -1003,6 +1003,13 @@ function renderManage(){
     select.addEventListener('change', ()=>saveBackupSettings({dayOfMonth:parseInt(select.value,10)}));
     modeDetail.appendChild(domWrap);
   }
+  const manualBtn=el(`<button class="btn secondary" style="margin-top:14px;">Download both now</button>`);
+  manualBtn.addEventListener('click', (e)=>{
+    e.target.disabled=true; e.target.textContent='Downloading…';
+    triggerAllBackups();
+    setTimeout(()=>{ e.target.disabled=false; e.target.textContent='Download both now'; }, 1500);
+  });
+  remCard.appendChild(manualBtn);
   wrap.appendChild(remCard);
   }
 
