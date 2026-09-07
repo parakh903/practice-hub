@@ -28,6 +28,19 @@
   --english:#FFA23D;
   --english-bg:rgba(255,162,61,0.17);
 
+  /* Per-child identity colors — assigned by order added (1st child, 2nd child, ...),
+     not tied to a specific name, so this keeps working if a 3rd/4th child is added.
+     Deliberately different hues from --science (lavender) and --english (amber)
+     above so a child tag is never confused with a subject tag at a glance. */
+  --child1:#B15CFF;
+  --child1-bg:rgba(177,92,255,0.18);
+  --child2:#FF7A45;
+  --child2-bg:rgba(255,122,69,0.18);
+  --child3:#4DD0E1;
+  --child3-bg:rgba(77,208,225,0.18);
+  --child4:#F06292;
+  --child4-bg:rgba(240,98,146,0.18);
+
   --good:#3CF178;
   --good-bg:rgba(60,241,120,0.16);
   --bad:#FF5C5C;
@@ -366,6 +379,16 @@ function formatDate(ts){
   if(!ts) return '';
   return new Date(ts).toLocaleDateString(undefined, {day:'numeric', month:'short'});
 }
+// Per-child identity colors, assigned by order added (state.children is already
+// sorted by createdAt ascending at load) — cycles through a 4-color palette so
+// it keeps working if more children are added later.
+const CHILD_COLOR_VARS=['--child1','--child2','--child3','--child4'];
+function childColorIdx(childId){
+  const i = state.children.findIndex(c=>c.id===childId);
+  return i>=0 ? i%CHILD_COLOR_VARS.length : 0;
+}
+function childColor(childId){ return `var(${CHILD_COLOR_VARS[childColorIdx(childId)]})`; }
+function childColorBg(childId){ return `var(${CHILD_COLOR_VARS[childColorIdx(childId)]}-bg)`; }
 function renderSubjectFilter(){
   const bar=el(`<div class="row" style="margin-bottom:16px;flex-wrap:wrap;"></div>`);
   bar.style.display='flex'; bar.style.gap='6px';
@@ -901,8 +924,8 @@ function renderManage(){
           <span style="color:${low?'var(--bad)':'var(--ink-soft)'};font-weight:${low?'600':'400'};font-size:0.85rem;">${remainingQ} left${low?' ⚠':''}</span>
         </div>`;
       }).join('');
-      childLowRow.appendChild(el(`<div class="card" style="padding:12px 14px;">
-        <strong style="font-size:0.95rem;">${esc(c.name)}</strong>
+      childLowRow.appendChild(el(`<div class="card" style="padding:12px 14px;border-left:5px solid ${childColor(c.id)};">
+        <strong style="font-size:0.95rem;color:${childColor(c.id)};">${esc(c.name)}</strong>
         <div style="margin-top:6px;">${lines}</div>
       </div>`));
     });
@@ -1897,7 +1920,7 @@ function renderAnswerItemRow(item){
   const statusColor = item.needsReview ? 'var(--mid-text)' : (item.correct ? 'var(--good)' : 'var(--bad)');
   const statusText = item.needsReview ? 'Possible correct — needs review' : (item.correct ? 'Correct' : 'Incorrect');
   const row=el(`<div style="padding:8px 0;border-bottom:1px solid var(--line);">
-    <div>${item.childName?`<span class="tag diff">${esc(item.childName)}</span>`:''}${item.subject?`<span class="tag ${item.subject}">${item.subject}</span>`:''}${item.topic?`<span class="tag diff">${esc(item.topic)}</span>`:''}${item.kind==='test'&&item.testTitle?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}</div>
+    <div>${item.childName?`<span class="tag" style="background:${childColorBg(item.childId)};color:${childColor(item.childId)};">${esc(item.childName)}</span>`:''}${item.subject?`<span class="tag ${item.subject}">${item.subject}</span>`:''}${item.topic?`<span class="tag diff">${esc(item.topic)}</span>`:''}${item.kind==='test'&&item.testTitle?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}</div>
     <div style="font-size:0.85rem;margin-top:4px;">${esc(item.prompt||'(question text unavailable)')}</div>
     <div class="mini" style="margin-top:2px;">Given: <strong>${esc(String(item.given))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
     ${solution?`<div class="solution-box" style="margin-top:8px;padding:10px 12px;"><div class="lbl">Worked solution</div>${esc(solution)}</div>`:''}
@@ -2029,8 +2052,8 @@ function renderChildSummaryCards(tests, questions){
   state.children.forEach(c=>{
     const s = tallyItems(decomposeChildAttempts(c.id, tests, questions));
     const testsDone = tests.filter(t=>latestAttempt(c.id,'test',t.id)).length;
-    const box=el(`<div class="card" style="padding:12px 14px;flex:1;min-width:160px;">
-      <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">${esc(c.name)}</div>
+    const box=el(`<div class="card" style="padding:12px 14px;flex:1;min-width:160px;border-left:5px solid ${childColor(c.id)};">
+      <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;color:${childColor(c.id)};font-weight:600;">${esc(c.name)}</div>
       ${s.attempted ? `
         <div style="font-size:1.3rem;font-family:var(--font-mono);font-weight:600;">${s.pct!==null?s.pct+'%':'—'}</div>
         <div class="mini" style="margin-top:2px;">${s.earned}/${s.total} marks &middot; ${s.correct}✓ ${s.wrong}✗${s.review?` &middot; ${s.review} review`:''}</div>
@@ -2053,7 +2076,7 @@ function renderSubjectCompareRow(dateRange){
     const box=el(`<div class="card subj-${subj}" style="padding:10px 12px;flex:1;min-width:150px;"><span class="tag ${subj}">${subj}</span></div>`);
     state.children.forEach(c=>{
       const s = tallyItems(decomposeChildAttempts(c.id, tests, qs));
-      box.appendChild(el(`<div class="mini" style="margin-top:5px;">${esc(shortName(c.name))}: ${s.attempted? `${s.pct}% (${s.earned}/${s.total})` : '—'}</div>`));
+      box.appendChild(el(`<div class="mini" style="margin-top:5px;"><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted? `${s.pct}% (${s.earned}/${s.total})` : '—'}</div>`));
     });
     row.appendChild(box);
   });
@@ -2092,10 +2115,11 @@ function renderQuestionCompareRow(q, testContext){
   const cells = state.children.map(c=>({child:c, cell:getChildCellForQuestion(c.id, q, testContext)}));
   const anyCell = cells.some(x=>x.cell);
   const pillsHtml = cells.map(({child,cell})=>{
-    if(!cell) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);color:var(--ink-soft);">${esc(shortName(child.name))}: —</span>`;
+    const nameSpan = `<span style="color:${childColor(child.id)};">${esc(shortName(child.name))}</span>`;
+    if(!cell) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);">${nameSpan}: —</span>`;
     const label = cell.needsReview ? 'review' : `${cell.earned}/${cell.marks}`;
     const pct = cell.needsReview ? 50 : (cell.marks? cell.earned/cell.marks*100 : 0);
-    return `<span class="score-pill ${cell.needsReview?'mid':scoreLabel(pct)}">${esc(shortName(child.name))}: ${label}</span>`;
+    return `<span class="score-pill ${cell.needsReview?'mid':scoreLabel(pct)}">${nameSpan}: ${label}</span>`;
   }).join(' ');
   const row=el(`<div style="padding:9px 0;border-bottom:1px solid var(--line);${anyCell?'cursor:pointer;':'opacity:0.55;'}">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
@@ -2112,13 +2136,13 @@ function renderQuestionCompareRow(q, testContext){
   if(open && anyCell){
     const detail=el(`<div style="padding:2px 0 12px 8px;"></div>`);
     cells.forEach(({child,cell})=>{
-      if(!cell){ detail.appendChild(el(`<div class="mini" style="margin:6px 0;">${esc(child.name)}: not attempted yet.</div>`)); return; }
+      if(!cell){ detail.appendChild(el(`<div class="mini" style="margin:6px 0;"><span style="color:${childColor(child.id)};font-weight:600;">${esc(child.name)}</span>: not attempted yet.</div>`)); return; }
       const correctKey = cell.correctAnswer ?? q.correctAnswer ?? (q.type==='mcq' && q.options ? q.options[q.correctIndex] : null);
       const solution = cell.solution ?? q.solution;
       const statusColor = cell.needsReview?'var(--mid-text)':(cell.correct?'var(--good)':'var(--bad)');
       const statusText = cell.needsReview?'possible correct — needs review':(cell.correct?'correct':'incorrect');
       detail.appendChild(el(`<div style="margin:6px 0;padding:8px 10px;background:rgba(0,0,0,0.04);border-radius:4px;">
-        <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${esc(child.name)} &middot; ${new Date(cell.date).toLocaleDateString()}</div>
+        <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;"><span style="color:${childColor(child.id)};font-weight:600;">${esc(child.name)}</span> &middot; ${new Date(cell.date).toLocaleDateString()}</div>
         <div class="mini" style="margin-top:3px;">Given: <strong>${esc(String(cell.given??'—'))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
         ${solution?`<div class="mini" style="margin-top:5px;"><em>Solution:</em> ${esc(solution)}</div>`:''}
       </div>`));
@@ -2135,10 +2159,11 @@ function renderTestCompareGroup(t){
   const key='cmp-test-'+t.id;
   const open = expandedRows.has(key);
   const pillsHtml = state.children.map(c=>{
+    const nameSpan = `<span style="color:${childColor(c.id)};">${esc(shortName(c.name))}</span>`;
     const r = latestAttempt(c.id,'test',t.id);
-    if(!r) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);color:var(--ink-soft);">${esc(shortName(c.name))}: —</span>`;
+    if(!r) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);">${nameSpan}: —</span>`;
     const pct = r.maxScore? r.score/r.maxScore*100 : 0;
-    return `<span class="score-pill ${scoreLabel(pct)}">${esc(shortName(c.name))}: ${r.score}/${r.maxScore}</span>`;
+    return `<span class="score-pill ${scoreLabel(pct)}">${nameSpan}: ${r.score}/${r.maxScore}</span>`;
   }).join(' ');
   const head=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;cursor:pointer;margin-bottom:${open?'0':'10px'};">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
@@ -2196,14 +2221,14 @@ function renderResults(){
         reviewItems.push({resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
           prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:r.marks||1,
           correct:false, needsReview:true, correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution,
-          childName:c.name});
+          childName:c.name, childId:c.id});
       } else if(r.type==='test'){
         (r.detail||[]).forEach((d,i)=>{
           if(d.needsReview && !d.reviewResolved){
             reviewItems.push({resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
               prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks||1, testTitle:r.title,
               correct:false, needsReview:true, correctAnswer:d.correctAnswer, solution:d.solution,
-              childName:c.name});
+              childName:c.name, childId:c.id});
           }
         });
       }
@@ -2278,7 +2303,9 @@ function render(){
   if(state.tab!=='manage' && state.tab!=='reference'){
     const bar=el(`<div class="child-bar"><span class="label">Student</span></div>`);
     state.children.forEach(c=>{
-      const chip=el(`<div class="chip ${state.currentChild===c.id?'active':''}">${esc(c.name)}</div>`);
+      const active = state.currentChild===c.id;
+      const col = childColor(c.id), colBg = childColorBg(c.id);
+      const chip=el(`<div class="chip ${active?'active':''}" style="${active?`background:${col};border-color:${col};color:#0A0A0A;`:`border-color:${col};color:${col};background:${colBg};`}">${esc(c.name)}</div>`);
       chip.addEventListener('click', ()=>{ state.currentChild=c.id; setRememberedChild(c.id); state.activeAttempt=null; render(); });
       bar.appendChild(chip);
     });
