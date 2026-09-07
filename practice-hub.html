@@ -811,9 +811,29 @@ function sumMinutes(ids){
 function sumMarks(ids){
   return state.qbank.filter(q=>ids.has(q.id)).reduce((s,q)=>s+(q.marks||1),0);
 }
+// A question lives in exactly one place: standalone practice, or inside a test —
+// never both. Once a question is added to any test, it's pulled out of the
+// standalone pool (Practice "to do", stock counts, and the picker for building
+// another test) so it can't be double-assigned or double-counted.
+function questionIdsUsedInTests(){
+  const set=new Set();
+  state.tests.forEach(t=>(t.questionIds||[]).forEach(id=>set.add(id)));
+  return set;
+}
+function testTitleForQuestion(qId){
+  const t = state.tests.find(t=>(t.questionIds||[]).includes(qId));
+  return t ? t.title : null;
+}
+// Who (if anyone) already answered this question as a standalone practice
+// question — used to warn before folding it into a test, since the test will
+// need a fresh attempt regardless of this history.
+function standaloneAttemptersForQuestion(qId){
+  return state.children.filter(c=>(state.results[c.id]||[]).some(r=>r.type==='question' && r.refId===qId));
+}
 
 function renderTestForm(){
-  const pool=state.qbank.filter(q=>q.subject===testForm.subject);
+  const usedIds = questionIdsUsedInTests();
+  const pool=state.qbank.filter(q=>q.subject===testForm.subject && !usedIds.has(q.id));
   const suggested=Math.ceil(sumMinutes(testForm.questionIds));
   const totalMarks=sumMarks(testForm.questionIds);
   return `
@@ -831,13 +851,17 @@ function renderTestForm(){
       </div>
     </div>
     <div class="mini" style="margin:-6px 0 10px;">${testForm.questionIds.size? `Selected questions add up to ${suggested} min · ${totalMarks} mark${totalMarks===1?'':'s'} total.${testForm.timeLimitTouched?' (you\'ve set a custom time limit)':' Time limit auto-set from this — edit the box above to override.'}`:'Select questions below to auto-calculate a suggested time.'}</div>
-    <label class="field">Select questions from the ${testForm.subject} bank (${pool.length} available)</label>
+    <label class="field">Select questions from the ${testForm.subject} bank (${pool.length} available — questions already in another test aren't shown here)</label>
     <div class="checkbox-list" id="tf-list">
-      ${pool.length? pool.map(q=>`
+      ${pool.length? pool.map(q=>{
+        const attempters = standaloneAttemptersForQuestion(q.id);
+        const warn = attempters.length ? `<span class="tag" style="background:var(--mid-bg);color:var(--mid-text);">⚠ already answered by ${attempters.map(c=>esc(shortName(c.name))).join(' & ')}</span>` : '';
+        return `
         <div class="checkbox-item">
           <input type="checkbox" data-id="${q.id}" class="tf-check" ${testForm.questionIds.has(q.id)?'checked':''}>
-          <div><span class="tag diff">${q.difficulty}</span><span class="mini">${q.timeMinutes||2} min · ${q.marks||1} mk</span> — ${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,60))}${q.prompt.length>60?'…':''}</div>
-        </div>`).join('') : '<div class="mini">No questions in this subject yet — add some to the bank first.</div>'}
+          <div><span class="tag diff">${q.difficulty}</span><span class="mini">${q.timeMinutes||2} min · ${q.marks||1} mk</span> — ${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,60))}${q.prompt.length>60?'…':''}${warn?`<div style="margin-top:3px;">${warn}</div>`:''}</div>
+        </div>`;
+      }).join('') : '<div class="mini">No available questions in this subject — add more to the bank, or they\'re all already used in other tests.</div>'}
     </div>
     <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
       <button class="btn" id="tf-save">Create test</button>
@@ -852,6 +876,16 @@ async function saveTest(){
   state.tfFormError='';
   if(!testForm.title){ state.tfFormError='Give the test a title.'; render(); return; }
   if(testForm.questionIds.size===0){ state.tfFormError='Select at least one question.'; render(); return; }
+  const flagged = [...testForm.questionIds].map(qId=>{
+    const q = state.qbank.find(x=>x.id===qId);
+    const attempters = standaloneAttemptersForQuestion(qId);
+    return attempters.length ? {q, attempters} : null;
+  }).filter(Boolean);
+  if(flagged.length){
+    const lines = flagged.map(f=>`• "${(f.q?.prompt||'').slice(0,50)}${(f.q?.prompt||'').length>50?'…':''}" — already answered by ${f.attempters.map(c=>c.name).join(' & ')}`).join('\n');
+    const proceed = confirm(`${flagged.length} of your selected question${flagged.length===1?'':'s'} ${flagged.length===1?'has':'have'} already been answered standalone:\n\n${lines}\n\nThe test will still need a fresh attempt regardless — this old answer won't carry over. Continue creating the test with ${flagged.length===1?'it':'them'} included?`);
+    if(!proceed) return;
+  }
   const t={id:uid(), title:testForm.title, subject:testForm.subject,
     timeLimitMins:testForm.timeLimitMins, questionIds:[...testForm.questionIds], createdAt:Date.now()};
   testForm={title:'', subject:'Maths', timeLimitMins:30, questionIds:new Set(), timeLimitTouched:false};
@@ -887,12 +921,13 @@ function renderManage(){
     return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type===type && r.refId===refId));
   }
   const LOW_Q = 3, LOW_T = 1;
+  const usedInTestIds = questionIdsUsedInTests();
   manageKeys.push('manage-stock');
   wrap.appendChild(sectionHeader('manage-stock', 'Stock levels'));
   if(!collapsedSections['manage-stock']){
   const stockRow=el(`<div class="row" style="margin-bottom:20px;"></div>`);
   SUBJECTS.forEach(subj=>{
-    const subjQ = state.qbank.filter(q=>q.subject===subj);
+    const subjQ = state.qbank.filter(q=>q.subject===subj && !usedInTestIds.has(q.id));
     const subjT = state.tests.filter(t=>t.subject===subj);
     const freshQ = subjQ.filter(q=>!doneByAllChildrenGlobal('question', q.id)).length;
     const freshT = subjT.filter(t=>!doneByAllChildrenGlobal('test', t.id)).length;
@@ -917,7 +952,7 @@ function renderManage(){
       const answeredQIds = new Set(myResults.filter(r=>r.type==='question').map(r=>r.refId));
       const answeredTIds = new Set(myResults.filter(r=>r.type==='test').map(r=>r.refId));
       const lines = SUBJECTS.map(subj=>{
-        const remainingQ = state.qbank.filter(q=>q.subject===subj && !answeredQIds.has(q.id)).length;
+        const remainingQ = state.qbank.filter(q=>q.subject===subj && !usedInTestIds.has(q.id) && !answeredQIds.has(q.id)).length;
         const low = remainingQ<=LOW_Q;
         return `<div style="display:flex;justify-content:space-between;padding:3px 0;">
           <span class="tag ${subj}">${subj}</span>
@@ -1103,11 +1138,14 @@ function renderManage(){
       items.forEach(q=>{
         const isPending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
         const allDone = doneByAllChildren(q.id);
-        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;${allDone?'opacity:0.6;':''}">
+        const inTestTitle = testTitleForQuestion(q.id);
+        const dim = allDone || inTestTitle;
+        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;${dim?'opacity:0.6;':''}">
           <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
           <span class="close-x" data-edit="${q.id}" style="right:70px;color:var(--maths);">edit</span>
-          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span><span class="tag diff">added ${formatDate(q.createdAt)}</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}
+          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span><span class="tag diff">added ${formatDate(q.createdAt)}</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}${inTestTitle?`<span class="tag diff" style="color:var(--mid-text);">in test: ${esc(inTestTitle)}</span>`:''}
           <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
+          ${inTestTitle?`<div class="mini" style="margin-top:4px;color:var(--mid-text);">Not offered as a standalone practice question while it's part of this test.</div>`:''}
         </div>`);
         card.querySelector('.close-x[data-id]').addEventListener('click', ()=>deleteQuestion(q.id));
         card.querySelector('.close-x[data-edit]').addEventListener('click', ()=>startEditQuestion(q));
@@ -1122,6 +1160,7 @@ function renderManage(){
   if(!collapsedSections['manage-buildtest']){
   const tf=el(renderTestForm());
   wrap.appendChild(tf);
+  tf.querySelector('#tf-title').addEventListener('input', e=>{ testForm.title=e.target.value; });
   tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); testForm.timeLimitTouched=false; render(); });
   tf.querySelector('#tf-time').addEventListener('input', e=>{ testForm.timeLimitTouched=true; testForm.timeLimitMins=+e.target.value||testForm.timeLimitMins; });
   tf.querySelectorAll('.tf-check').forEach(cb=>{
@@ -1314,8 +1353,9 @@ function renderPractice(){
   app.appendChild(renderSubjectFilter());
 
   const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
+  const usedInTestIds = questionIdsUsedInTests();
   const testItems = state.tests.filter(t=>passesFilter(t.subject)).map(t=>({kind:'test', obj:t, done:lastAttemptFor('test', t.id)}));
-  const qItems = state.qbank.filter(q=>passesFilter(q.subject)).map(q=>({kind:'question', obj:q, done:lastAttemptFor('question', q.id)}));
+  const qItems = state.qbank.filter(q=>passesFilter(q.subject) && !usedInTestIds.has(q.id)).map(q=>({kind:'question', obj:q, done:lastAttemptFor('question', q.id)}));
   const allItems = [...testItems, ...qItems];
 
   if(allItems.length===0){
