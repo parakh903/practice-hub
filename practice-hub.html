@@ -241,6 +241,12 @@ let state={
   bulkText:'',
   bulkMsg:'',
   subjectFilter:'All',
+  // Results tab filters — separate from subjectFilter reuse below since these are
+  // specific to the comparison view (which test, which date-posted range).
+  resultsTestFilter:'all', // 'all' | 'standalone' | a specific test id
+  resultsDatePreset:'all', // 'all'|'today'|'7d'|'30d'|'month'|'year'|'custom'
+  resultsDateFrom:null,
+  resultsDateTo:null,
   refSearch:'',
   refBulkText:'',
   refBulkMsg:'',
@@ -1568,9 +1574,8 @@ async function finalizeTestSelfMarks(){
 }
 
 // ---------- RESULTS TAB ----------
-let expandedResults=new Set();
 let expandedRefs=new Set();
-let collapsedSections={'practice-done':true, 'results-done':true, 'manage-bulkq':true, 'manage-addq':true, 'manage-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
+let collapsedSections={'practice-done':true, 'manage-bulkq':true, 'manage-addq':true, 'manage-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
 function sectionHeader(key, label){
   const collapsed = !!collapsedSections[key];
   const header=el(`<div class="mini" style="margin:14px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;">
@@ -1846,15 +1851,6 @@ function renderReference(){
   renderResultsInto(resultsContainer);
 }
 
-function pctOf(r){
-  const m=r.marks||1;
-  if(r.type==='question'){
-    let earned = r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??null);
-    return earned===null ? null : (m? earned/m*100 : 0);
-  } else {
-    return r.maxScore ? (r.score/r.maxScore*100) : null;
-  }
-}
 
 async function resolveReview(item, decision){
   const isCorrect = decision==='correct';
@@ -1881,8 +1877,18 @@ async function resolveReview(item, decision){
   }
 }
 
-let expandedTopics={};
+// ---------- RESULTS TAB (comparison view) ----------
+// Organized around date POSTED (when a question/test was added to the bank),
+// not date attempted — because a question is one row shared by every child,
+// and "date attempted" varies per child, which would break a stable sort/
+// filter key for a row that's meant to show more than one child's answer.
+// Date-attempted still shows in the per-child expanded detail underneath.
 
+function shortName(name){ return (name||'?').split(' ')[0]; }
+
+// Used by the merged needs-review queue below. Same as before, plus a tag
+// naming which child this particular answer belongs to (the queue now spans
+// every child at once instead of just the one currently selected).
 function renderAnswerItemRow(item){
   const bankQ = state.qbank.find(q=>q.id===item.qId);
   const correctKey = item.correctAnswer ?? bankQ?.correctAnswer;
@@ -1891,7 +1897,7 @@ function renderAnswerItemRow(item){
   const statusColor = item.needsReview ? 'var(--mid-text)' : (item.correct ? 'var(--good)' : 'var(--bad)');
   const statusText = item.needsReview ? 'Possible correct — needs review' : (item.correct ? 'Correct' : 'Incorrect');
   const row=el(`<div style="padding:8px 0;border-bottom:1px solid var(--line);">
-    <div>${item.subject?`<span class="tag ${item.subject}">${item.subject}</span>`:''}${item.topic?`<span class="tag diff">${esc(item.topic)}</span>`:''}${item.kind==='test'&&item.testTitle?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}</div>
+    <div>${item.childName?`<span class="tag diff">${esc(item.childName)}</span>`:''}${item.subject?`<span class="tag ${item.subject}">${item.subject}</span>`:''}${item.topic?`<span class="tag diff">${esc(item.topic)}</span>`:''}${item.kind==='test'&&item.testTitle?`<span class="tag diff">${esc(item.testTitle)}</span>`:''}</div>
     <div style="font-size:0.85rem;margin-top:4px;">${esc(item.prompt||'(question text unavailable)')}</div>
     <div class="mini" style="margin-top:2px;">Given: <strong>${esc(String(item.given))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
     ${solution?`<div class="solution-box" style="margin-top:8px;padding:10px 12px;"><div class="lbl">Worked solution</div>${esc(solution)}</div>`:''}
@@ -1907,352 +1913,339 @@ function renderAnswerItemRow(item){
   return row;
 }
 
-let expandedTodoAnswers=new Set();
-
-function renderTodoQuestionDetail(obj){
-  const wrap=el(`<div></div>`);
-  const shown = expandedTodoAnswers.has(obj.id);
-  const toggleBtn=el(`<button class="btn secondary" style="margin-top:6px;padding:3px 10px;font-size:0.72rem;">${shown?'Hide answer & solution':'Show answer & solution'}</button>`);
-  toggleBtn.addEventListener('click', ()=>{
-    if(expandedTodoAnswers.has(obj.id)) expandedTodoAnswers.delete(obj.id); else expandedTodoAnswers.add(obj.id);
-    render();
-  });
-  wrap.appendChild(toggleBtn);
-  if(shown){
-    const key = obj.type==='mcq' ? (obj.options?.[obj.correctIndex] ?? null) : (obj.correctAnswer ?? null);
-    wrap.appendChild(el(`<div class="mini" style="margin-top:6px;">${key?`Answer key: <strong>${esc(key)}</strong>`:'(no single answer key — self-marked from the guide below)'}</div>`));
-    if(obj.solution) wrap.appendChild(el(`<div class="solution-box" style="margin-top:6px;padding:10px 12px;"><div class="lbl">Worked solution</div>${esc(obj.solution)}</div>`));
+function computeResultsDateRange(){
+  const preset = state.resultsDatePreset;
+  if(preset==='all') return null;
+  const now = new Date();
+  if(preset==='custom'){
+    const from = state.resultsDateFrom ? new Date(state.resultsDateFrom+'T00:00:00').getTime() : null;
+    const to = state.resultsDateTo ? new Date(state.resultsDateTo+'T23:59:59').getTime() : null;
+    if(from===null && to===null) return null;
+    return [from??-Infinity, to??Infinity];
   }
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if(preset==='today') return [startToday, Date.now()+1];
+  if(preset==='7d') return [Date.now()-7*86400000, Date.now()+1];
+  if(preset==='30d') return [Date.now()-30*86400000, Date.now()+1];
+  if(preset==='month') return [new Date(now.getFullYear(), now.getMonth(), 1).getTime(), Date.now()+1];
+  if(preset==='year') return [new Date(now.getFullYear(), 0, 1).getTime(), Date.now()+1];
+  return null;
+}
+function inRange(ts, range){ return !range || (ts>=range[0] && ts<=range[1]); }
+
+function renderResultsDateFilter(){
+  const wrap=el(`<div style="margin-bottom:6px;"></div>`);
+  const chipRow=el(`<div class="row" style="flex-wrap:wrap;"></div>`);
+  chipRow.style.display='flex'; chipRow.style.gap='6px';
+  [['all','All time'],['today','Today'],['7d','7 days'],['30d','30 days'],['month','This month'],['year','This year'],['custom','Custom']].forEach(([id,label])=>{
+    const chip=el(`<div class="chip ${state.resultsDatePreset===id?'active':''}" style="flex:0 0 auto;">${label}</div>`);
+    chip.addEventListener('click', ()=>{ state.resultsDatePreset=id; render(); });
+    chipRow.appendChild(chip);
+  });
+  wrap.appendChild(chipRow);
+  if(state.resultsDatePreset==='custom'){
+    const custom=el(`<div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;">
+      <div><label class="field" style="margin:6px 0 3px;">From</label><input type="date" id="results-date-from" value="${state.resultsDateFrom||''}"></div>
+      <div><label class="field" style="margin:6px 0 3px;">To</label><input type="date" id="results-date-to" value="${state.resultsDateTo||''}"></div>
+    </div>`);
+    custom.querySelector('#results-date-from').addEventListener('change', e=>{ state.resultsDateFrom=e.target.value||null; render(); });
+    custom.querySelector('#results-date-to').addEventListener('change', e=>{ state.resultsDateTo=e.target.value||null; render(); });
+    wrap.appendChild(custom);
+  }
+  wrap.appendChild(el(`<div class="mini" style="margin-top:6px;">Filters by when each question/test was posted — not when it was answered.</div>`));
   return wrap;
+}
+
+function renderResultsTestFilter(){
+  const wrap=el(`<div style="margin-bottom:14px;max-width:340px;"><label class="field" style="margin-top:0;">Test</label><select id="results-test-filter"></select></div>`);
+  const select = wrap.querySelector('select');
+  select.appendChild(el(`<option value="all">All tests &amp; questions</option>`));
+  select.appendChild(el(`<option value="standalone">Standalone questions only</option>`));
+  state.tests.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).forEach(t=>{
+    const opt=document.createElement('option');
+    opt.value=t.id;
+    opt.textContent=`${t.title||'Untitled'} — ${t.subject} — posted ${formatDate(t.createdAt)}`;
+    select.appendChild(opt);
+  });
+  select.value = state.resultsTestFilter;
+  select.addEventListener('change', ()=>{ state.resultsTestFilter=select.value; render(); });
+  return wrap;
+}
+
+// Latest attempt only (a question/test can be re-attempted; the comparison
+// table shows current standing, and every attempt is still visible if you
+// expand a row — nothing is discarded).
+function latestAttempt(childId, type, refId){
+  const arr=(state.results[childId]||[]).filter(r=>r.type===type && r.refId===refId);
+  if(!arr.length) return null;
+  return arr.slice().sort((a,b)=>b.date-a.date)[0];
+}
+function allAttempts(childId, type, refId){
+  return (state.results[childId]||[]).filter(r=>r.type===type && r.refId===refId).slice().sort((a,b)=>b.date-a.date);
+}
+
+// Breaks every attempt (standalone AND each sub-question inside a test) down
+// to one common "question attempt" shape, so correct/wrong/marks tallies are
+// counted in the same unit everywhere — a question — regardless of whether it
+// was answered solo or as part of a test.
+function decomposeChildAttempts(childId, tests, questions){
+  const items=[];
+  questions.forEach(q=>{
+    const r = latestAttempt(childId,'question',q.id);
+    if(!r) return;
+    const m = r.marks||q.marks||1;
+    const needsReview = !!(r.needsReview && !r.reviewResolved);
+    const correct = needsReview? false : (r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>=m));
+    const earned = needsReview? 0 : (r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0));
+    items.push({marks:m, earned, correct, needsReview});
+  });
+  tests.forEach(t=>{
+    const r = latestAttempt(childId,'test',t.id);
+    if(!r) return;
+    (r.detail||[]).forEach(d=>{
+      const m=d.marks||1;
+      const needsReview = !!(d.needsReview && !d.reviewResolved);
+      const correct = needsReview? false : (d.correct!==null&&d.correct!==undefined ? d.correct : (d.selfMark==='correct'||d.selfMark==='partial'));
+      const earned = needsReview? 0 : (d.correct!==null&&d.correct!==undefined ? (d.correct?m:0) : (d.selfMark==='correct'?m:d.selfMark==='partial'?m/2:0));
+      items.push({marks:m, earned, correct, needsReview});
+    });
+  });
+  return items;
+}
+function tallyItems(items){
+  let correct=0, wrong=0, review=0, earned=0, total=0;
+  items.forEach(it=>{
+    total+=it.marks;
+    if(it.needsReview){ review++; return; }
+    earned+=it.earned;
+    if(it.correct) correct++; else wrong++;
+  });
+  return {attempted:items.length, correct, wrong, review, earned, total, pct: total? Math.round(earned/total*100) : null};
+}
+
+function renderChildSummaryCards(tests, questions){
+  const row=el(`<div class="row" style="margin-bottom:16px;flex-wrap:wrap;"></div>`);
+  row.style.display='flex'; row.style.gap='10px';
+  state.children.forEach(c=>{
+    const s = tallyItems(decomposeChildAttempts(c.id, tests, questions));
+    const testsDone = tests.filter(t=>latestAttempt(c.id,'test',t.id)).length;
+    const box=el(`<div class="card" style="padding:12px 14px;flex:1;min-width:160px;">
+      <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">${esc(c.name)}</div>
+      ${s.attempted ? `
+        <div style="font-size:1.3rem;font-family:var(--font-mono);font-weight:600;">${s.pct!==null?s.pct+'%':'—'}</div>
+        <div class="mini" style="margin-top:2px;">${s.earned}/${s.total} marks &middot; ${s.correct}✓ ${s.wrong}✗${s.review?` &middot; ${s.review} review`:''}</div>
+        <div class="mini" style="margin-top:2px;">${s.attempted} question${s.attempted===1?'':'s'} attempted &middot; ${testsDone}/${tests.length} test${tests.length===1?'':'s'}</div>
+      ` : `<div class="mini" style="margin-top:4px;">No attempts in this range yet.</div>`}
+    </div>`);
+    row.appendChild(box);
+  });
+  return row;
+}
+
+function renderSubjectCompareRow(dateRange){
+  const row=el(`<div class="row" style="margin-bottom:16px;flex-wrap:wrap;"></div>`);
+  row.style.display='flex'; row.style.gap='10px';
+  SUBJECTS.forEach(subj=>{
+    let tests = state.tests.filter(t=>t.subject===subj && inRange(t.createdAt,dateRange));
+    let qs = state.qbank.filter(q=>q.subject===subj && inRange(q.createdAt,dateRange));
+    if(state.resultsTestFilter==='standalone') tests=[];
+    else if(state.resultsTestFilter!=='all'){ tests=tests.filter(t=>t.id===state.resultsTestFilter); qs=[]; }
+    const box=el(`<div class="card subj-${subj}" style="padding:10px 12px;flex:1;min-width:150px;"><span class="tag ${subj}">${subj}</span></div>`);
+    state.children.forEach(c=>{
+      const s = tallyItems(decomposeChildAttempts(c.id, tests, qs));
+      box.appendChild(el(`<div class="mini" style="margin-top:5px;">${esc(shortName(c.name))}: ${s.attempted? `${s.pct}% (${s.earned}/${s.total})` : '—'}</div>`));
+    });
+    row.appendChild(box);
+  });
+  return row;
+}
+
+let expandedRows = new Set();
+
+function getChildCellForQuestion(childId, q, testContext){
+  if(testContext){
+    const r = latestAttempt(childId,'test',testContext.id);
+    if(!r) return null;
+    const d = (r.detail||[]).find(x=>x.qId===q.id);
+    if(!d) return null;
+    const m=d.marks||1;
+    const needsReview = !!(d.needsReview && !d.reviewResolved);
+    const correct = needsReview? false : (d.correct!==null&&d.correct!==undefined ? d.correct : (d.selfMark==='correct'||d.selfMark==='partial'));
+    const earned = needsReview? 0 : (d.correct!==null&&d.correct!==undefined ? (d.correct?m:0) : (d.selfMark==='correct'?m:d.selfMark==='partial'?m/2:0));
+    return {resultId:r.id, marks:m, earned, correct, needsReview, date:r.date, given:d.given, correctAnswer:d.correctAnswer, solution:d.solution};
+  }
+  const r = latestAttempt(childId,'question',q.id);
+  if(!r) return null;
+  const m = r.marks||q.marks||1;
+  const needsReview = !!(r.needsReview && !r.reviewResolved);
+  const correct = needsReview? false : (r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>=m));
+  const earned = needsReview? 0 : (r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0));
+  return {resultId:r.id, marks:m, earned, correct, needsReview, date:r.date, given:r.detail?.[0]?.given, correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution};
+}
+
+// One row per question. Shows a compact score pill per child (blank/dim if
+// that child hasn't attempted it) — tap the row to expand and see each
+// child's given answer, the answer key, and the worked solution beneath it.
+function renderQuestionCompareRow(q, testContext){
+  const rowKey = (testContext ? 'cmp-tq-'+testContext.id+'-' : 'cmp-q-') + q.id;
+  const open = expandedRows.has(rowKey);
+  const cells = state.children.map(c=>({child:c, cell:getChildCellForQuestion(c.id, q, testContext)}));
+  const anyCell = cells.some(x=>x.cell);
+  const pillsHtml = cells.map(({child,cell})=>{
+    if(!cell) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);color:var(--ink-soft);">${esc(shortName(child.name))}: —</span>`;
+    const label = cell.needsReview ? 'review' : `${cell.earned}/${cell.marks}`;
+    const pct = cell.needsReview ? 50 : (cell.marks? cell.earned/cell.marks*100 : 0);
+    return `<span class="score-pill ${cell.needsReview?'mid':scoreLabel(pct)}">${esc(shortName(child.name))}: ${label}</span>`;
+  }).join(' ');
+  const row=el(`<div style="padding:9px 0;border-bottom:1px solid var(--line);${anyCell?'cursor:pointer;':'opacity:0.55;'}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:150px;">
+        ${!testContext?`<span class="tag ${q.subject}">${q.subject}</span>`:''}${q.topic?`<span class="tag diff">${esc(q.topic)}</span>`:''}
+        <div style="font-size:0.85rem;margin-top:4px;">${esc((q.prompt||'(question no longer in bank)').slice(0,140))}${(q.prompt||'').length>140?'…':''}</div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;flex:0 0 auto;">${pillsHtml}</div>
+    </div>
+  </div>`);
+  const wrapper=el(`<div></div>`);
+  if(anyCell) row.addEventListener('click', ()=>{ if(expandedRows.has(rowKey)) expandedRows.delete(rowKey); else expandedRows.add(rowKey); render(); });
+  wrapper.appendChild(row);
+  if(open && anyCell){
+    const detail=el(`<div style="padding:2px 0 12px 8px;"></div>`);
+    cells.forEach(({child,cell})=>{
+      if(!cell){ detail.appendChild(el(`<div class="mini" style="margin:6px 0;">${esc(child.name)}: not attempted yet.</div>`)); return; }
+      const correctKey = cell.correctAnswer ?? q.correctAnswer ?? (q.type==='mcq' && q.options ? q.options[q.correctIndex] : null);
+      const solution = cell.solution ?? q.solution;
+      const statusColor = cell.needsReview?'var(--mid-text)':(cell.correct?'var(--good)':'var(--bad)');
+      const statusText = cell.needsReview?'possible correct — needs review':(cell.correct?'correct':'incorrect');
+      detail.appendChild(el(`<div style="margin:6px 0;padding:8px 10px;background:rgba(0,0,0,0.04);border-radius:4px;">
+        <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;">${esc(child.name)} &middot; ${new Date(cell.date).toLocaleDateString()}</div>
+        <div class="mini" style="margin-top:3px;">Given: <strong>${esc(String(cell.given??'—'))}</strong>${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
+        ${solution?`<div class="mini" style="margin-top:5px;"><em>Solution:</em> ${esc(solution)}</div>`:''}
+      </div>`));
+    });
+    wrapper.appendChild(detail);
+  }
+  return wrapper;
+}
+
+// One collapsible group per test — header shows each child's overall score
+// for that test; expanding it reveals every question inside via the same
+// per-question comparison row used for standalone questions.
+function renderTestCompareGroup(t){
+  const key='cmp-test-'+t.id;
+  const open = expandedRows.has(key);
+  const pillsHtml = state.children.map(c=>{
+    const r = latestAttempt(c.id,'test',t.id);
+    if(!r) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);color:var(--ink-soft);">${esc(shortName(c.name))}: —</span>`;
+    const pct = r.maxScore? r.score/r.maxScore*100 : 0;
+    return `<span class="score-pill ${scoreLabel(pct)}">${esc(shortName(c.name))}: ${r.score}/${r.maxScore}</span>`;
+  }).join(' ');
+  const head=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;cursor:pointer;margin-bottom:${open?'0':'10px'};">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+      <div>
+        <span style="display:inline-block;transition:transform .15s;transform:rotate(${open?'0':'-90'}deg);margin-right:4px;">▾</span>
+        <span class="tag ${t.subject}">${t.subject}</span><span class="tag diff">Test</span>
+        <div style="margin-top:6px;font-size:0.92rem;font-weight:500;">${esc(t.title||'Untitled test')}</div>
+        <div class="mini" style="margin-top:3px;">posted ${formatDate(t.createdAt)} &middot; ${(t.questionIds||[]).length} question${(t.questionIds||[]).length===1?'':'s'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">${pillsHtml}</div>
+    </div>
+  </div>`);
+  head.addEventListener('click', ()=>{ if(expandedRows.has(key)) expandedRows.delete(key); else expandedRows.add(key); render(); });
+  const wrapper=el(`<div></div>`);
+  wrapper.appendChild(head);
+  if(open){
+    const body=el(`<div class="card" style="padding:2px 16px;margin-top:-1px;margin-bottom:10px;border-top:none;border-top-left-radius:0;border-top-right-radius:0;"></div>`);
+    (t.questionIds||[]).forEach(qid=>{
+      const q = state.qbank.find(x=>x.id===qid) || {id:qid, prompt:'(question no longer in bank)', subject:t.subject};
+      body.appendChild(renderQuestionCompareRow(q, t));
+    });
+    if(body.lastChild) body.lastChild.style.borderBottom='none';
+    wrapper.appendChild(body);
+  }
+  return wrapper;
 }
 
 function renderResults(){
   const app=document.getElementById('app');
-  if(!state.currentChild){
-    const msg = state.children.length===0
-      ? 'Add a child in the Manage tab to see results.'
-      : 'Tap a name above to see that child\'s results.';
-    app.appendChild(el(`<div class="empty">${esc(msg)}</div>`));
+  if(state.children.length===0){
+    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to see results.</div>`));
     return;
   }
-  const allList=(state.results[state.currentChild]||[]).slice().sort((x,y)=>y.date-x.date);
-  app.appendChild(el(`<h2 class="section-title">Results for ${esc(state.children.find(c=>c.id===state.currentChild)?.name||'')}</h2>`));
-
-  // Weekly summary
-  const weekAgo = Date.now() - 7*86400000;
-  const weekAttempts = allList.filter(r=>r.date>=weekAgo);
-  const weekQ = weekAttempts.filter(r=>r.type==='question').length;
-  const weekT = weekAttempts.filter(r=>r.type==='test').length;
-  const weekPcts = weekAttempts.map(pctOf).filter(p=>p!==null);
-  const weekAvg = weekPcts.length ? Math.round(weekPcts.reduce((a,b)=>a+b,0)/weekPcts.length) : null;
-
-  // All-time summary
-  const totalQ = allList.filter(r=>r.type==='question').length;
-  const totalT = allList.filter(r=>r.type==='test').length;
-  const allPcts = allList.map(pctOf).filter(p=>p!==null);
-  const allAvg = allPcts.length ? Math.round(allPcts.reduce((a,b)=>a+b,0)/allPcts.length) : null;
-
-  const summaryRow=el(`<div class="row" style="margin-bottom:16px;"></div>`);
-  summaryRow.appendChild(el(`<div class="card" style="padding:12px 16px;">
-    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">This week</div>
-    <div style="font-size:0.95rem;">${weekQ} question${weekQ===1?'':'s'} · ${weekT} test${weekT===1?'':'s'}${weekAvg!==null?` · avg ${weekAvg}%`:''}</div>
-  </div>`));
-  summaryRow.appendChild(el(`<div class="card" style="padding:12px 16px;">
-    <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">All time</div>
-    <div style="font-size:0.95rem;">${totalQ} question${totalQ===1?'':'s'} · ${totalT} test${totalT===1?'':'s'}${allAvg!==null?` · avg ${allAvg}%`:''}</div>
-  </div>`));
-  app.appendChild(summaryRow);
-
-  // Per-subject trend (last 10 attempts each, ignores subject filter chip on purpose)
-  const trendRow=el(`<div class="row" style="margin-bottom:16px;"></div>`);
-  SUBJECTS.forEach(subj=>{
-    const attempts = allList.filter(r=>r.subject===subj && pctOf(r)!==null).slice(0,10); // already date-desc sorted
-    const box=el(`<div class="card subj-${subj}" style="padding:12px 14px;"></div>`);
-    if(attempts.length===0){
-      box.innerHTML = `<span class="tag ${subj}">${subj}</span><div class="mini" style="margin-top:6px;">No attempts yet</div>`;
-    } else {
-      const avg = Math.round(attempts.reduce((s,r)=>s+pctOf(r),0)/attempts.length);
-      let trendLabel='', trendColor='var(--ink-soft)';
-      if(attempts.length>=4){
-        const half=Math.floor(attempts.length/2);
-        const recentAvg = attempts.slice(0,half).reduce((s,r)=>s+pctOf(r),0)/half;
-        const olderAvg = attempts.slice(half).reduce((s,r)=>s+pctOf(r),0)/(attempts.length-half);
-        const diff=recentAvg-olderAvg;
-        if(diff>5){ trendLabel='▲ improving'; trendColor='var(--good)'; }
-        else if(diff<-5){ trendLabel='▼ dipping'; trendColor='var(--bad)'; }
-        else { trendLabel='— steady'; }
-      }
-      box.innerHTML = `<span class="tag ${subj}">${subj}</span>
-        <div style="font-size:1.3rem;font-family:var(--font-mono);font-weight:600;margin-top:6px;">${avg}%</div>
-        <div class="mini">last ${attempts.length} attempt${attempts.length===1?'':'s'}${trendLabel?` · <span style="color:${trendColor};">${trendLabel}</span>`:''}</div>`;
-    }
-    trendRow.appendChild(box);
-  });
-  app.appendChild(trendRow);
-
+  app.appendChild(el(`<h2 class="section-title">Results — compare</h2>`));
   app.appendChild(renderSubjectFilter());
+  app.appendChild(renderResultsTestFilter());
+  app.appendChild(renderResultsDateFilter());
 
-  const passesFilter = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
-  const list = allList.filter(r=>passesFilter(r.subject));
+  const dateRange = computeResultsDateRange();
+  const subjPasses = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
 
-  // ---- Needs review: numeric answers the auto-grader flagged as "close but
-  // not an exact match" (units included/omitted, a small rounding gap, or a
-  // format the answer key didn't anticipate) rather than confidently marking
-  // right or wrong — plus anything a child manually disputed. Nothing here
-  // has been scored as correct yet; a parent has the final call. ----
+  let tests = state.tests.filter(t=>subjPasses(t.subject) && inRange(t.createdAt,dateRange));
+  let questions = state.qbank.filter(q=>subjPasses(q.subject) && inRange(q.createdAt,dateRange));
+  if(state.resultsTestFilter==='standalone'){ tests=[]; }
+  else if(state.resultsTestFilter!=='all'){ tests=tests.filter(t=>t.id===state.resultsTestFilter); questions=[]; }
+  tests.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  questions.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+
+  // Needs review — merged across every child, since it's the same triage
+  // queue regardless of whose answer is waiting on a judgement call.
   const reviewItems=[];
-  list.forEach(r=>{
-    if(r.type==='question' && r.needsReview && !r.reviewResolved){
-      reviewItems.push({resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
-        prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:r.marks,
-        correct:false, needsReview:true, correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution});
-    } else if(r.type==='test'){
-      (r.detail||[]).forEach((d,i)=>{
-        if(d.needsReview && !d.reviewResolved){
-          reviewItems.push({resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
-            prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks, testTitle:r.title,
-            correct:false, needsReview:true, correctAnswer:d.correctAnswer, solution:d.solution});
-        }
-      });
-    }
+  state.children.forEach(c=>{
+    (state.results[c.id]||[]).forEach(r=>{
+      if(r.type==='question' && r.needsReview && !r.reviewResolved){
+        reviewItems.push({resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
+          prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:r.marks||1,
+          correct:false, needsReview:true, correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution,
+          childName:c.name});
+      } else if(r.type==='test'){
+        (r.detail||[]).forEach((d,i)=>{
+          if(d.needsReview && !d.reviewResolved){
+            reviewItems.push({resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
+              prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks||1, testTitle:r.title,
+              correct:false, needsReview:true, correctAnswer:d.correctAnswer, solution:d.solution,
+              childName:c.name});
+          }
+        });
+      }
+    });
   });
   if(reviewItems.length){
     app.appendChild(sectionHeader('results-needsreview', `⚠ Possible correct — needs review (${reviewItems.length})`));
     if(!collapsedSections['results-needsreview']){
       const queueCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
       reviewItems.forEach(item=>queueCard.appendChild(renderAnswerItemRow(item)));
-      queueCard.lastChild.style.borderBottom='none';
+      if(queueCard.lastChild) queueCard.lastChild.style.borderBottom='none';
       app.appendChild(queueCard);
     }
   }
 
-  // Collects every section key actually rendered below (test history / by topic /
-  // still to do / done), so one control can expand or collapse the whole tab at
-  // once. getKeys() is only called when the button is clicked — by then this
-  // render pass has finished and the array is complete, regardless of where in
-  // the DOM the bar itself sits.
+  app.appendChild(renderChildSummaryCards(tests, questions));
+  if(state.subjectFilter==='All' && state.resultsTestFilter==='all'){
+    app.appendChild(renderSubjectCompareRow(dateRange));
+  }
+
   const resultsKeys=[];
-  app.appendChild(expandCollapseBar(()=>resultsKeys, (collapsed)=>{
-    if(collapsed) list.forEach(r=>expandedResults.delete(r.id));
-    else list.forEach(r=>expandedResults.add(r.id));
-  }));
+  app.appendChild(expandCollapseBar(()=>resultsKeys));
 
-  // Test history — a dedicated, tests-only report so test performance isn't buried among adhoc questions
-  const testResults = list.filter(r=>r.type==='test').sort((a,b)=>b.date-a.date);
-  if(testResults.length){
-    resultsKeys.push('results-testhistory');
-    const testPcts = testResults.map(pctOf).filter(p=>p!==null);
-    const testAvg = testPcts.length ? Math.round(testPcts.reduce((a,b)=>a+b,0)/testPcts.length) : null;
-    app.appendChild(sectionHeader('results-testhistory', `Test history (${testResults.length})${testAvg!==null?` — avg ${testAvg}%`:''}`));
-    if(!collapsedSections['results-testhistory']){
-    const testCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
-    testResults.forEach(r=>{
-      const pct = pctOf(r);
-      testCard.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);gap:10px;">
-        <div>
-          <span class="tag ${r.subject}">${r.subject}</span> ${esc(r.title||'Untitled test')}
-          <div class="mini" style="margin-top:2px;">${new Date(r.date).toLocaleDateString()}${r.timeTakenSecs!=null && r.expectedMinutes? ` · took ${Math.round(r.timeTakenSecs/60)}m (expected ~${r.expectedMinutes}m)`:''}</div>
-        </div>
-        <span class="score-pill ${scoreLabel(pct??0)}" style="flex:0 0 auto;">${r.score}/${r.maxScore}</span>
-      </div>`));
-    });
-    testCard.lastChild.style.borderBottom='none';
-    app.appendChild(testCard);
+  if(tests.length){
+    resultsKeys.push('results-tests');
+    app.appendChild(sectionHeader('results-tests', `Tests (${tests.length})`));
+    if(!collapsedSections['results-tests']){
+      tests.forEach(t=>app.appendChild(renderTestCompareGroup(t)));
     }
   }
-
-  // By topic — weakest first, combines standalone questions AND questions inside completed tests
-  const topicStats = {};
-  const topicItemsMap = {};
-  function addToTopic(topic, subject, earned, total){
-    if(!topic) return;
-    if(!topicStats[topic]) topicStats[topic]={earned:0,total:0,subject};
-    topicStats[topic].earned+=earned; topicStats[topic].total+=total;
-  }
-  function addTopicItem(topic, item){
-    if(!topic) return;
-    if(!topicItemsMap[topic]) topicItemsMap[topic]=[];
-    topicItemsMap[topic].push(item);
-  }
-  list.filter(r=>r.type==='question' && r.topic).forEach(r=>{
-    const p = pctOf(r);
-    if(p===null) return;
-    const m=r.marks||1;
-    const isCorrect = r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>=m);
-    const earned = r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0);
-    addToTopic(r.topic, r.subject, earned, m);
-    addTopicItem(r.topic, {resultId:r.id, kind:'question', subject:r.subject, topic:r.topic,
-      prompt:r.detail?.[0]?.prompt, given:r.detail?.[0]?.given, qId:r.refId, marks:m,
-      correct:isCorrect, needsReview:!!r.needsReview, date:r.date,
-      correctAnswer:r.detail?.[0]?.correctAnswer, solution:r.detail?.[0]?.solution});
-  });
-  list.filter(r=>r.type==='test').forEach(r=>{
-    (r.detail||[]).forEach((d,i)=>{
-      if(!d.topic) return; // older tests taken before topic-tracking was added won't have this
-      const m=d.marks||1;
-      const earned = d.correct!==null && d.correct!==undefined ? (d.correct?m:0) : (d.selfMark==='correct'?m : d.selfMark==='partial'?m/2 : d.selfMark==='incorrect'?0 : null);
-      if(earned===null) return;
-      const isCorrect = d.correct!==null && d.correct!==undefined ? d.correct : (d.selfMark==='correct' || d.selfMark==='partial');
-      addToTopic(d.topic, d.subject, earned, m);
-      addTopicItem(d.topic, {resultId:r.id, kind:'test', detailIndex:i, subject:d.subject, topic:d.topic,
-        prompt:d.prompt, given:d.given, qId:d.qId, marks:m, correct:isCorrect, needsReview:!!d.needsReview, date:r.date, testTitle:r.title,
-        correctAnswer:d.correctAnswer, solution:d.solution});
-    });
-  });
-  const topicRows = Object.entries(topicStats).map(([topic,s])=>({topic, ...s, pct: s.total? s.earned/s.total*100:0})).sort((a,b)=>a.pct-b.pct);
-  if(topicRows.length){
-    resultsKeys.push('results-bytopic');
-    app.appendChild(sectionHeader('results-bytopic', 'By topic (weakest first)'));
-    if(!collapsedSections['results-bytopic']){
-    const topicCard=el(`<div class="card" style="padding:10px 16px;"></div>`);
-    topicRows.forEach(t=>{
-      const topicKey='results-topic-'+t.topic;
-      const items = (topicItemsMap[t.topic]||[]).sort((a,b)=>b.date-a.date);
-      const topicOpen = !!expandedTopics[t.topic];
-      const rowHead=el(`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;">
-        <div><span style="display:inline-block;transition:transform .15s;transform:rotate(${topicOpen?'0':'-90'}deg);margin-right:4px;">▾</span><span class="tag ${t.subject}">${t.subject}</span> ${esc(t.topic)} <span class="mini">(${items.length} question${items.length===1?'':'s'})</span></div>
-        <span class="score-pill ${scoreLabel(t.pct)}">${t.earned}/${t.total}</span>
-      </div>`);
-      rowHead.addEventListener('click', ()=>{ expandedTopics[t.topic]=!expandedTopics[t.topic]; render(); });
-      topicCard.appendChild(rowHead);
-      if(topicOpen){
-        const itemsWrap=el(`<div style="padding:4px 0 8px 20px;"></div>`);
-        items.forEach(item=>itemsWrap.appendChild(renderAnswerItemRow(item)));
-        topicCard.appendChild(itemsWrap);
-      }
-    });
-    topicCard.lastChild.style.borderBottom='none';
-    app.appendChild(topicCard);
+  if(questions.length){
+    resultsKeys.push('results-standalone');
+    app.appendChild(sectionHeader('results-standalone', `Standalone questions (${questions.length})`));
+    if(!collapsedSections['results-standalone']){
+      const card=el(`<div class="card" style="padding:2px 16px;"></div>`);
+      questions.forEach(q=>card.appendChild(renderQuestionCompareRow(q, null)));
+      if(card.lastChild) card.lastChild.style.borderBottom='none';
+      app.appendChild(card);
     }
   }
-
-  // Done comes first here (opposite of the Practice tab, which leads with To do,
-  // since Results is for reviewing what's already been answered) — Still to do
-  // sits below it as a secondary "what's left" reference.
-  if(list.length>0){
-    resultsKeys.push('results-done');
-    app.appendChild(sectionHeader('results-done', `Done (${list.length})`));
-    if(!collapsedSections['results-done']){
-    list.forEach(r=>{
-      let scoreText, pct;
-      const m = r.marks||1;
-    if(r.type==='question'){
-      if(r.autoCorrect!==null){ scoreText = `${r.autoCorrect?m:0}/${m}`; pct = r.autoCorrect?100:0; }
-      else if(r.selfMark){ const e=r.earned??0; scoreText = `${e}/${m}`; pct = m? (e/m*100):0; }
-      else { scoreText='pending'; pct=0; }
-    } else {
-      scoreText = `${r.score}/${r.maxScore}`; pct = r.maxScore? (r.score/r.maxScore*100):0;
-    }
-    let timeText=null, timeColor='var(--ink-soft)';
-    if(r.timeTakenSecs!=null && r.expectedMinutes){
-      const tookMin = r.timeTakenSecs/60;
-      const ratio = tookMin/r.expectedMinutes;
-      const tookLabel = tookMin<1 ? '<1m' : `${Math.round(tookMin)}m`;
-      timeText = `${tookLabel} / ~${r.expectedMinutes}m expected`;
-      if(ratio>=1.5) timeColor='var(--bad)';
-      else if(ratio<=0.6) timeColor='var(--maths)';
-    }
-    // look up when the original question/test was posted
-    const source = r.type==='test' ? state.tests.find(t=>t.id===r.refId) : state.qbank.find(q=>q.id===r.refId);
-    const postedText = source ? `posted ${formatDate(source.createdAt)} · ` : '';
-    const card=el(`<div class="card subj-${r.subject}" style="padding:14px 16px;cursor:pointer;"></div>`);
-    card.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-      <div>
-        <span class="tag ${r.subject}">${r.subject}</span><span class="tag diff">${r.type==='test'?'Test':'Question'}</span>
-        <div style="margin-top:6px;font-size:0.92rem;font-weight:500;">${esc(r.title||r.topic||'Untitled')}</div>
-        <div class="mini" style="margin-top:3px;">${postedText}done ${new Date(r.date).toLocaleDateString()} ${new Date(r.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${timeText?` · <span style="color:${timeColor};font-family:var(--font-mono);">${timeText}</span>`:''}</div>
-      </div>
-      <span class="score-pill ${scoreLabel(pct)}" style="flex:0 0 auto;">${scoreText}</span>
-    </div>`));
-    card.addEventListener('click', ()=>{ if(expandedResults.has(r.id)) expandedResults.delete(r.id); else expandedResults.add(r.id); renderResultsBody(); });
-    app.appendChild(card);
-    if(expandedResults.has(r.id)){
-      const panel=el(`<div class="detail-panel" style="margin-top:-8px;margin-bottom:16px;"></div>`);
-      (r.detail||[]).forEach((d,i)=>{
-        const correctKey = d.correctAnswer ?? state.qbank.find(q=>q.id===d.qId)?.correctAnswer;
-        const solution = d.solution ?? state.qbank.find(q=>q.id===d.qId)?.solution;
-        const item = r.type==='test'
-          ? {resultId:r.id, kind:'test', detailIndex:i, subject:d.subject||r.subject, topic:d.topic, prompt:d.prompt, given:d.given, qId:d.qId, marks:d.marks||1, correct: d.correct!==null&&d.correct!==undefined ? d.correct : (d.selfMark==='correct'||d.selfMark==='partial'), needsReview:!!d.needsReview}
-          : {resultId:r.id, kind:'question', subject:r.subject, topic:r.topic, prompt:d.prompt, given:d.given, qId:d.qId, marks:r.marks||1, correct: r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>0), needsReview:!!r.needsReview};
-        const statusColor = item.needsReview ? 'var(--mid-text)' : (item.correct ? 'var(--good)' : 'var(--bad)');
-        const statusText = item.needsReview ? 'possible correct — needs review' : (d.correct!==null&&d.correct!==undefined ? (d.correct?'correct':'incorrect') : (d.selfMark || (item.correct?'correct':'incorrect')));
-        const row=el(`<div style="margin-bottom:12px;">
-          <div style="font-size:0.85rem;"><strong>${esc((d.prompt||'').slice(0,120))}${(d.prompt||'').length>120?'…':''}</strong></div>
-          <div class="mini">Answer given: ${esc(String(d.given??'—'))}${correctKey?` &middot; Answer key: <strong>${esc(correctKey)}</strong>`:''} &middot; <span style="color:${statusColor};font-weight:600;">${statusText}</span></div>
-          ${solution?`<div style="margin-top:6px;padding:8px 10px;background:rgba(0,0,0,0.04);border-radius:4px;"><div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px;">Worked solution</div>${esc(solution)}</div>`:''}
-          <div style="margin-top:6px;display:flex;gap:6px;">
-            <button class="btn secondary" data-v="correct" style="padding:3px 10px;font-size:0.72rem;">Mark correct</button>
-            <button class="btn secondary" data-v="incorrect" style="padding:3px 10px;font-size:0.72rem;">Mark wrong</button>
-          </div>
-        </div>`);
-        row.querySelectorAll('button').forEach(b=>{
-          b.addEventListener('click', (e)=>{ e.stopPropagation(); resolveReview(item, b.dataset.v); });
-        });
-        panel.appendChild(row);
-      });
-      app.appendChild(panel);
-    }
-  });
-  }
-  }
-
-  // Still to do — items with no attempt yet by this child, combined & sorted oldest-posted-first
-  const attemptedTestIds = new Set(allList.filter(r=>r.type==='test').map(r=>r.refId));
-  const attemptedQIds = new Set(allList.filter(r=>r.type==='question').map(r=>r.refId));
-  const todoItems = [
-    ...state.tests.filter(t=>!attemptedTestIds.has(t.id) && passesFilter(t.subject)).map(t=>({kind:'test', obj:t})),
-    ...state.qbank.filter(q=>!attemptedQIds.has(q.id) && passesFilter(q.subject)).map(q=>({kind:'question', obj:q}))
-  ].sort((a,b)=>(a.obj.createdAt||0)-(b.obj.createdAt||0));
-
-  if(todoItems.length){
-    resultsKeys.push('results-stilltodo');
-    const lowStock = todoItems.length<=2;
-    const stdHeader = sectionHeader('results-stilltodo', `Still to do (${todoItems.length})${lowStock?' ⚠ running low':''}`);
-    if(lowStock){ stdHeader.style.color='var(--bad)'; stdHeader.style.fontWeight='600'; }
-    app.appendChild(stdHeader);
-    if(!collapsedSections['results-stilltodo']){
-    todoItems.forEach(({kind,obj})=>{
-      if(kind==='test'){
-        const testKey='stilltodo-test-'+obj.id;
-        const testOpen = expandedTodoAnswers.has(testKey);
-        const card=el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.9;">
-          <span class="tag ${obj.subject}">${obj.subject}</span><span class="tag diff">Test</span>
-          <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.title)}</div>
-          <div class="mini" style="margin-top:3px;">posted ${formatDate(obj.createdAt)}</div>
-        </div>`);
-        const revealBtn=el(`<button class="btn secondary" style="margin-top:6px;padding:3px 10px;font-size:0.72rem;">${testOpen?'Hide questions':'Show questions, answers & solutions'}</button>`);
-        revealBtn.addEventListener('click', ()=>{
-          if(expandedTodoAnswers.has(testKey)) expandedTodoAnswers.delete(testKey); else expandedTodoAnswers.add(testKey);
-          render();
-        });
-        card.appendChild(revealBtn);
-        if(testOpen){
-          (obj.questionIds||[]).forEach(qid=>{
-            const q = state.qbank.find(x=>x.id===qid);
-            if(!q) return;
-            const qBox=el(`<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
-              <div style="font-size:0.85rem;">${esc(q.prompt)}</div>
-            </div>`);
-            qBox.appendChild(renderTodoQuestionDetail(q));
-            card.appendChild(qBox);
-          });
-        }
-        app.appendChild(card);
-      } else {
-        const card=el(`<div class="card subj-${obj.subject}" style="padding:12px 16px;opacity:0.9;">
-          <span class="tag ${obj.subject}">${obj.subject}</span><span class="tag diff">Question</span>
-          <div style="margin-top:6px;font-size:0.9rem;">${esc(obj.topic)||'(no topic)'} — ${esc(obj.prompt)}</div>
-          <div class="mini" style="margin-top:3px;">posted ${formatDate(obj.createdAt)}</div>
-        </div>`);
-        card.appendChild(renderTodoQuestionDetail(obj));
-        app.appendChild(card);
-      }
-    });
-    }
-  }
-
-  if(list.length===0 && todoItems.length===0){
-    app.appendChild(el(`<div class="empty">${state.subjectFilter==='All'?'No attempts yet.':'Nothing in this subject yet.'}</div>`));
+  if(!tests.length && !questions.length){
+    app.appendChild(el(`<div class="empty">Nothing matches these filters.</div>`));
   }
 }
 function renderResultsBody(){ render(); }
