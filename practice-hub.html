@@ -1479,7 +1479,7 @@ async function finalizeTestSelfMarks(){
 
 // ---------- RESULTS TAB ----------
 let expandedRefs=new Set();
-let collapsedSections={'practice-done':true, 'results-bulkq':true, 'results-addq':true, 'results-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
+let collapsedSections={'practice-done':true, 'results-topics':true, 'results-bulkq':true, 'results-addq':true, 'results-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
 function sectionHeader(key, label){
   const collapsed = !!collapsedSections[key];
   const header=el(`<div class="mini" style="margin:14px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;">
@@ -1926,6 +1926,83 @@ function tallyItems(items){
   });
   return {attempted:items.length, correct, wrong, review, earned, total, pct: total? Math.round(earned/total*100) : null};
 }
+// Same per-question decomposition as decomposeChildAttempts, but every item
+// (attempted or not) keeps its own subject+topic — needed because a single
+// test is one subject but can still mix several topics across its questions,
+// so topic-level stats have to be built question-by-question, not test-by-test.
+function decomposeChildItemsWithTopic(childId, tests, questions){
+  const items=[];
+  questions.forEach(q=>{
+    const topic=q.topic||'(no topic)', subject=q.subject, marks=q.marks||1;
+    const r = latestAttempt(childId,'question',q.id);
+    if(!r){ items.push({subject, topic, marks, attempted:false}); return; }
+    const m = r.marks||marks;
+    const needsReview = !!(r.needsReview && !r.reviewResolved);
+    const correct = needsReview? false : (r.autoCorrect!==null ? r.autoCorrect : ((r.earned??0)>=m));
+    const earned = needsReview? 0 : (r.autoCorrect!==null ? (r.autoCorrect?m:0) : (r.earned??0));
+    items.push({subject, topic, marks:m, attempted:true, earned, correct, needsReview});
+  });
+  tests.forEach(t=>{
+    const r = latestAttempt(childId,'test',t.id);
+    (t.questionIds||[]).forEach(qid=>{
+      const bankQ = state.qbank.find(x=>x.id===qid);
+      const subject = bankQ?.subject||t.subject, topic = bankQ?.topic||'(no topic)', marks=bankQ?.marks||1;
+      const d = r ? (r.detail||[]).find(x=>x.qId===qid) : null;
+      if(!d){ items.push({subject, topic, marks, attempted:false}); return; }
+      const m=d.marks||marks;
+      const needsReview = !!(d.needsReview && !d.reviewResolved);
+      const correct = needsReview? false : (d.correct!==null&&d.correct!==undefined ? d.correct : (d.selfMark==='correct'||d.selfMark==='partial'));
+      const earned = needsReview? 0 : (d.correct!==null&&d.correct!==undefined ? (d.correct?m:0) : (d.selfMark==='correct'?m:d.selfMark==='partial'?m/2:0));
+      items.push({subject, topic, marks:m, attempted:true, earned, correct, needsReview});
+    });
+  });
+  return items;
+}
+function renderTopicBreakdown(tests, questions){
+  const perChild={};
+  state.children.forEach(c=>{ perChild[c.id]=decomposeChildItemsWithTopic(c.id, tests, questions); });
+
+  const topicList=[]; const seen=new Set();
+  state.children.forEach(c=>perChild[c.id].forEach(it=>{
+    const key=it.subject+'||'+it.topic;
+    if(!seen.has(key)){ seen.add(key); topicList.push({subject:it.subject, topic:it.topic}); }
+  }));
+  function statsFor(childId, subject, topic){
+    let attempted=0, correct=0, wrong=0, review=0, earned=0, total=0, toDo=0;
+    perChild[childId].forEach(it=>{
+      if(it.subject!==subject || it.topic!==topic) return;
+      if(!it.attempted){ toDo++; return; }
+      attempted++; total+=it.marks;
+      if(it.needsReview){ review++; return; }
+      earned+=it.earned;
+      if(it.correct) correct++; else wrong++;
+    });
+    return {attempted, correct, wrong, review, earned, total, toDo, pct: total?Math.round(earned/total*100):null};
+  }
+  // Subject first, then topics with the most outstanding "to do" work across
+  // both children float to the top — the areas most worth assigning next.
+  topicList.sort((a,b)=>{
+    if(a.subject!==b.subject) return a.subject.localeCompare(b.subject);
+    const aToDo=state.children.reduce((s,c)=>s+statsFor(c.id,a.subject,a.topic).toDo,0);
+    const bToDo=state.children.reduce((s,c)=>s+statsFor(c.id,b.subject,b.topic).toDo,0);
+    if(aToDo!==bToDo) return bToDo-aToDo;
+    return a.topic.localeCompare(b.topic);
+  });
+
+  const wrap=el(`<div></div>`);
+  if(!topicList.length){ wrap.appendChild(el(`<div class="empty">No topics in this filter yet.</div>`)); return wrap; }
+  topicList.forEach(({subject,topic})=>{
+    const row=el(`<div class="card subj-${subject}" style="padding:9px 14px;margin-bottom:6px;">
+      <span class="tag ${subject}">${subject}</span><span class="tag diff">${esc(topic)}</span>
+    </div>`);
+    state.children.forEach(c=>{
+      const s=statsFor(c.id, subject, topic);
+      row.appendChild(el(`<div class="mini" style="margin-top:4px;"><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted?`${s.pct}% (${s.earned}/${s.total})`:'—'}${s.toDo?` <span style="color:var(--mid-text);">&middot; ${s.toDo} to do</span>`:''}</div>`));
+    });
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
 // "To do" in the same per-question unit as tallyItems' attempted count — a
 // standalone question not yet attempted counts as 1; a not-yet-attempted test
 // counts as all of its questions (tests are answered as one all-or-nothing
@@ -2168,6 +2245,13 @@ function renderResults(){
 
   const resultsKeys=[];
   app.appendChild(expandCollapseBar(()=>resultsKeys));
+
+  resultsKeys.push('results-topics');
+  app.appendChild(sectionHeader('results-topics', 'Topic breakdown'));
+  if(!collapsedSections['results-topics']){
+    app.appendChild(el(`<div class="mini" style="margin:-4px 0 8px;">Sorted by subject, then by whichever topics have the most left to do — the areas most worth assigning next.</div>`));
+    app.appendChild(renderTopicBreakdown(tests, questions));
+  }
 
   if(tests.length){
     resultsKeys.push('results-tests');
