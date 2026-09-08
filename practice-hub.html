@@ -560,6 +560,7 @@ function startEditQuestion(q){
     editId:q.id, createdAt:q.createdAt||Date.now(), diagramSvg:q.diagramSvg||'', imageUrl:q.imageUrl||''
   };
   state.qFormError='';
+  collapsedSections['results-addq']=false;
   render();
   const formEl=document.getElementById('qf-prompt');
   if(formEl) formEl.scrollIntoView({behavior:'smooth', block:'center'});
@@ -787,6 +788,13 @@ async function clearAllReferenceNotes(){
   }
 }
 
+async function performDeleteQuestion(id){
+  await db.collection('qbank').doc(id).delete();
+  const affected = state.tests.filter(t=>t.questionIds.includes(id));
+  for(const t of affected){
+    await db.collection('tests').doc(t.id).update({questionIds: t.questionIds.filter(qid=>qid!==id)});
+  }
+}
 async function deleteQuestion(id){
   if(!(state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===id)){
     state.pendingDelete={type:'question', id};
@@ -795,11 +803,7 @@ async function deleteQuestion(id){
   }
   state.pendingDelete=null;
   render();
-  await db.collection('qbank').doc(id).delete();
-  const affected = state.tests.filter(t=>t.questionIds.includes(id));
-  for(const t of affected){
-    await db.collection('tests').doc(t.id).update({questionIds: t.questionIds.filter(qid=>qid!==id)});
-  }
+  await performDeleteQuestion(id);
 }
 
 // ---------- TEST BUILDER ----------
@@ -915,60 +919,6 @@ function renderManage(){
   const manageKeys=[];
   wrap.appendChild(expandCollapseBar(()=>manageKeys));
 
-  // Stock levels — how many fresh (not-done-by-everyone) items remain per subject
-  function doneByAllChildrenGlobal(type, refId){
-    if(state.children.length===0) return false;
-    return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type===type && r.refId===refId));
-  }
-  const LOW_Q = 3, LOW_T = 1;
-  const usedInTestIds = questionIdsUsedInTests();
-  manageKeys.push('manage-stock');
-  wrap.appendChild(sectionHeader('manage-stock', 'Stock levels'));
-  if(!collapsedSections['manage-stock']){
-  const stockRow=el(`<div class="row" style="margin-bottom:20px;"></div>`);
-  SUBJECTS.forEach(subj=>{
-    const subjQ = state.qbank.filter(q=>q.subject===subj && !usedInTestIds.has(q.id));
-    const subjT = state.tests.filter(t=>t.subject===subj);
-    const freshQ = subjQ.filter(q=>!doneByAllChildrenGlobal('question', q.id)).length;
-    const freshT = subjT.filter(t=>!doneByAllChildrenGlobal('test', t.id)).length;
-    const lowQ = freshQ<=LOW_Q, lowT = subjT.length>0 && freshT<LOW_T;
-    const warn = lowQ || (subjT.length===0) || lowT;
-    stockRow.appendChild(el(`<div class="card subj-${subj}" style="padding:12px 14px;${warn?'border-left-color:var(--bad);':''}">
-      <span class="tag ${subj}">${subj}</span>
-      <div style="margin-top:6px;font-size:0.9rem;">
-        <span style="color:${lowQ?'var(--bad)':'var(--ink)'};font-weight:${lowQ?'600':'400'};">${freshQ} fresh question${freshQ===1?'':'s'}</span>${lowQ?' ⚠':''}
-      </div>
-      <div class="mini" style="margin-top:2px;color:${(subjT.length===0||lowT)?'var(--bad)':'var(--ink-soft)'};">${subjT.length===0?'no tests yet':`${freshT} fresh test${freshT===1?'':'s'}`}${lowT?' ⚠':''}</div>
-    </div>`));
-  });
-  wrap.appendChild(stockRow);
-
-  // Per-child breakdown — catches the case where one child races ahead of the other
-  // and runs out individually, even while the shared "fresh" count above still looks fine.
-  if(state.children.length>0){
-    const childLowRow=el(`<div class="row" style="margin-bottom:20px;"></div>`);
-    state.children.forEach(c=>{
-      const myResults = state.results[c.id]||[];
-      const answeredQIds = new Set(myResults.filter(r=>r.type==='question').map(r=>r.refId));
-      const answeredTIds = new Set(myResults.filter(r=>r.type==='test').map(r=>r.refId));
-      const lines = SUBJECTS.map(subj=>{
-        const remainingQ = state.qbank.filter(q=>q.subject===subj && !usedInTestIds.has(q.id) && !answeredQIds.has(q.id)).length;
-        const low = remainingQ<=LOW_Q;
-        return `<div style="display:flex;justify-content:space-between;padding:3px 0;">
-          <span class="tag ${subj}">${subj}</span>
-          <span style="color:${low?'var(--bad)':'var(--ink-soft)'};font-weight:${low?'600':'400'};font-size:0.85rem;">${remainingQ} left${low?' ⚠':''}</span>
-        </div>`;
-      }).join('');
-      childLowRow.appendChild(el(`<div class="card" style="padding:12px 14px;border-left:5px solid ${childColor(c.id)};">
-        <strong style="font-size:0.95rem;color:${childColor(c.id)};">${esc(c.name)}</strong>
-        <div style="margin-top:6px;">${lines}</div>
-      </div>`));
-    });
-    wrap.appendChild(el(`<div class="mini" style="margin:-10px 0 10px;">Per-child: how many unanswered questions each child has left in each subject.</div>`));
-    wrap.appendChild(childLowRow);
-  }
-  }
-
   manageKeys.push('manage-backup');
   wrap.appendChild(sectionHeader('manage-backup', 'Backup & restore'));
   if(!collapsedSections['manage-backup']){
@@ -1081,115 +1031,6 @@ function renderManage(){
   });
   kids.appendChild(buildAddChildControl('card'));
   wrap.appendChild(kids);
-  }
-
-  manageKeys.push('manage-bulkq');
-  wrap.appendChild(sectionHeader('manage-bulkq', 'Bulk add questions'));
-  if(!collapsedSections['manage-bulkq']){
-  const bulkCard=el(`<div class="card">
-    <div class="mini" style="margin-bottom:8px;">Paste a block of questions (ask Claude for a batch in this format) and add them all in one go — no need to fill in the form for each one.</div>
-    <textarea id="bulk-text" style="min-height:140px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","difficulty":"Extension","type":"mcq","topic":"Indices","timeMinutes":2,"marks":1,"prompt":"...","options":["A","B","C","D"],"correctIndex":0,"solution":"..."}]'>${esc(state.bulkText)}</textarea>
-    <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
-      <button class="btn" id="bulk-import-btn">Import all</button>
-      ${state.bulkMsg?`<span class="mini" style="color:${state.bulkMsg.startsWith('Added')?'var(--good)':'var(--bad)'};">${esc(state.bulkMsg)}</span>`:''}
-    </div>
-  </div>`);
-  bulkCard.querySelector('#bulk-text').addEventListener('input', e=>{ state.bulkText=e.target.value; });
-  bulkCard.querySelector('#bulk-import-btn').addEventListener('click', bulkImport);
-  wrap.appendChild(bulkCard);
-  }
-
-  manageKeys.push('manage-addq');
-  wrap.appendChild(sectionHeader('manage-addq', 'Add a single question to the bank'));
-  if(!collapsedSections['manage-addq']){
-  const qf=el(renderQForm());
-  wrap.appendChild(qf);
-  const typeFieldsContainer=qf.querySelector('#qf-type-fields');
-  renderQTypeFields(typeFieldsContainer);
-  qf.querySelector('#qf-subject').addEventListener('change', e=>{ qForm.subject=e.target.value; });
-  qf.querySelector('#qf-difficulty').addEventListener('change', e=>{ qForm.difficulty=e.target.value; });
-  qf.querySelector('#qf-type').addEventListener('change', e=>{ qForm.type=e.target.value; renderQTypeFields(typeFieldsContainer); });
-  qf.querySelector('#qf-save').addEventListener('click', saveQuestion);
-  if(qf.querySelector('#qf-cancel')) qf.querySelector('#qf-cancel').addEventListener('click', cancelEditQuestion);
-  }
-
-  manageKeys.push('manage-bank');
-  wrap.appendChild(sectionHeader('manage-bank', `Question bank (${state.qbank.length})`));
-  if(!collapsedSections['manage-bank']){
-  if(state.qbank.length===0){
-    wrap.appendChild(el(`<div class="empty">No questions yet. Add your first one above.</div>`));
-  } else {
-    function doneByAllChildren(qId){
-      if(state.children.length===0) return false;
-      return state.children.every(c => (state.results[c.id]||[]).some(r=>r.type==='question' && r.refId===qId));
-    }
-    const bankKeys = SUBJECTS.filter(subj=>state.qbank.some(q=>q.subject===subj)).map(subj=>'manage-bank-'+subj);
-    manageKeys.push(...bankKeys);
-    SUBJECTS.forEach(subj=>{
-      const items=state.qbank.filter(q=>q.subject===subj).sort((a,b)=>{
-        const da=doneByAllChildren(a.id), db_=doneByAllChildren(b.id);
-        if(da!==db_) return da? 1 : -1; // done-by-everyone sinks to bottom
-        return (b.createdAt||0)-(a.createdAt||0);
-      });
-      if(!items.length) return;
-      const bankKey='manage-bank-'+subj;
-      wrap.appendChild(sectionHeader(bankKey, `${subj} — ${items.length}`));
-      if(collapsedSections[bankKey]) return;
-      items.forEach(q=>{
-        const isPending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
-        const allDone = doneByAllChildren(q.id);
-        const inTestTitle = testTitleForQuestion(q.id);
-        const dim = allDone || inTestTitle;
-        const card=el(`<div class="card subj-${subj}" style="padding:12px 16px;${dim?'opacity:0.6;':''}">
-          <span class="close-x" data-id="${q.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
-          <span class="close-x" data-edit="${q.id}" style="right:70px;color:var(--maths);">edit</span>
-          <span class="tag diff">${q.difficulty}</span><span class="tag diff">${q.type}</span><span class="tag diff">${q.timeMinutes||2} min · ${q.marks||1} mk</span><span class="tag diff">added ${formatDate(q.createdAt)}</span>${allDone?'<span class="tag diff" style="color:var(--good);">done by all</span>':''}${inTestTitle?`<span class="tag diff" style="color:var(--mid-text);">in test: ${esc(inTestTitle)}</span>`:''}
-          <div style="margin-top:6px;font-size:0.9rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,90))}${q.prompt.length>90?'…':''}</div>
-          ${inTestTitle?`<div class="mini" style="margin-top:4px;color:var(--mid-text);">Not offered as a standalone practice question while it's part of this test.</div>`:''}
-        </div>`);
-        card.querySelector('.close-x[data-id]').addEventListener('click', ()=>deleteQuestion(q.id));
-        card.querySelector('.close-x[data-edit]').addEventListener('click', ()=>startEditQuestion(q));
-        wrap.appendChild(card);
-      });
-    });
-  }
-  }
-
-  manageKeys.push('manage-buildtest');
-  wrap.appendChild(sectionHeader('manage-buildtest', 'Build a timed test'));
-  if(!collapsedSections['manage-buildtest']){
-  const tf=el(renderTestForm());
-  wrap.appendChild(tf);
-  tf.querySelector('#tf-title').addEventListener('input', e=>{ testForm.title=e.target.value; });
-  tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); testForm.timeLimitTouched=false; render(); });
-  tf.querySelector('#tf-time').addEventListener('input', e=>{ testForm.timeLimitTouched=true; testForm.timeLimitMins=+e.target.value||testForm.timeLimitMins; });
-  tf.querySelectorAll('.tf-check').forEach(cb=>{
-    cb.addEventListener('change', e=>{
-      const id=e.target.dataset.id;
-      if(e.target.checked) testForm.questionIds.add(id); else testForm.questionIds.delete(id);
-      if(!testForm.timeLimitTouched) testForm.timeLimitMins=Math.max(5, Math.ceil(sumMinutes(testForm.questionIds)));
-      render();
-    });
-  });
-  tf.querySelector('#tf-save').addEventListener('click', saveTest);
-  }
-
-  manageKeys.push('manage-tests');
-  wrap.appendChild(sectionHeader('manage-tests', `Existing tests (${state.tests.length})`));
-  if(state.tests.length===0){
-    wrap.appendChild(el(`<div class="empty">No tests built yet.</div>`));
-  } else if(!collapsedSections['manage-tests']) {
-    state.tests.forEach(t=>{
-      const isPending = state.pendingDelete && state.pendingDelete.type==='test' && state.pendingDelete.id===t.id;
-      const card=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;">
-        <span class="close-x" data-id="${t.id}" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
-        <span class="tag ${t.subject}">${t.subject}</span>
-        <strong>${esc(t.title)}</strong>
-        <div class="mini" style="margin-top:4px;">${t.questionIds.length} questions · ${t.timeLimitMins} min · added ${formatDate(t.createdAt)}</div>
-      </div>`);
-      card.querySelector('.close-x').addEventListener('click', ()=>deleteTest(t.id));
-      wrap.appendChild(card);
-    });
   }
 
   // ---- Reference / cheat sheet notes ----
@@ -1638,7 +1479,7 @@ async function finalizeTestSelfMarks(){
 
 // ---------- RESULTS TAB ----------
 let expandedRefs=new Set();
-let collapsedSections={'practice-done':true, 'manage-bulkq':true, 'manage-addq':true, 'manage-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
+let collapsedSections={'practice-done':true, 'results-bulkq':true, 'results-addq':true, 'results-buildtest':true, 'manage-addnote':true, 'manage-bulknotes':true};
 function sectionHeader(key, label){
   const collapsed = !!collapsedSections[key];
   const header=el(`<div class="mini" style="margin:14px 0 8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;">
@@ -2085,6 +1926,16 @@ function tallyItems(items){
   });
   return {attempted:items.length, correct, wrong, review, earned, total, pct: total? Math.round(earned/total*100) : null};
 }
+// "To do" in the same per-question unit as tallyItems' attempted count — a
+// standalone question not yet attempted counts as 1; a not-yet-attempted test
+// counts as all of its questions (tests are answered as one all-or-nothing
+// sitting, so there's no such thing as "half a test to do").
+function toDoCount(childId, tests, questions){
+  let n=0;
+  questions.forEach(q=>{ if(!latestAttempt(childId,'question',q.id)) n++; });
+  tests.forEach(t=>{ if(!latestAttempt(childId,'test',t.id)) n+=(t.questionIds||[]).length; });
+  return n;
+}
 
 function renderChildSummaryCards(tests, questions){
   const row=el(`<div class="row" style="margin-bottom:16px;flex-wrap:wrap;"></div>`);
@@ -2092,13 +1943,14 @@ function renderChildSummaryCards(tests, questions){
   state.children.forEach(c=>{
     const s = tallyItems(decomposeChildAttempts(c.id, tests, questions));
     const testsDone = tests.filter(t=>latestAttempt(c.id,'test',t.id)).length;
+    const toDo = toDoCount(c.id, tests, questions);
     const box=el(`<div class="card" style="padding:12px 14px;flex:1;min-width:160px;border-left:5px solid ${childColor(c.id)};">
       <div class="mini" style="font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;color:${childColor(c.id)};font-weight:600;">${esc(c.name)}</div>
       ${s.attempted ? `
         <div style="font-size:1.3rem;font-family:var(--font-mono);font-weight:600;">${s.pct!==null?s.pct+'%':'—'}</div>
         <div class="mini" style="margin-top:2px;">${s.earned}/${s.total} marks &middot; ${s.correct}✓ ${s.wrong}✗${s.review?` &middot; ${s.review} review`:''}</div>
-        <div class="mini" style="margin-top:2px;">${s.attempted} question${s.attempted===1?'':'s'} attempted &middot; ${testsDone}/${tests.length} test${tests.length===1?'':'s'}</div>
-      ` : `<div class="mini" style="margin-top:4px;">No attempts in this range yet.</div>`}
+        <div class="mini" style="margin-top:2px;">${s.attempted} done &middot; ${testsDone}/${tests.length} test${tests.length===1?'':'s'} &middot; <span style="color:${toDo?'var(--mid-text)':'var(--ink-soft)'};">${toDo} to do</span></div>
+      ` : `<div class="mini" style="margin-top:4px;">No attempts in this range yet.${toDo?` ${toDo} to do.`:''}</div>`}
     </div>`);
     row.appendChild(box);
   });
@@ -2116,7 +1968,8 @@ function renderSubjectCompareRow(dateRange){
     const box=el(`<div class="card subj-${subj}" style="padding:10px 12px;flex:1;min-width:150px;"><span class="tag ${subj}">${subj}</span></div>`);
     state.children.forEach(c=>{
       const s = tallyItems(decomposeChildAttempts(c.id, tests, qs));
-      box.appendChild(el(`<div class="mini" style="margin-top:5px;"><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted? `${s.pct}% (${s.earned}/${s.total})` : '—'}</div>`));
+      const toDo = toDoCount(c.id, tests, qs);
+      box.appendChild(el(`<div class="mini" style="margin-top:5px;"><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted? `${s.pct}% (${s.earned}/${s.total})` : '—'}${toDo?` <span style="color:var(--mid-text);">· ${toDo} to do</span>`:''}</div>`));
     });
     row.appendChild(box);
   });
@@ -2149,11 +2002,13 @@ function getChildCellForQuestion(childId, q, testContext){
 // One row per question. Shows a compact score pill per child (blank/dim if
 // that child hasn't attempted it) — tap the row to expand and see each
 // child's given answer, the answer key, and the worked solution beneath it.
+let selectedQIds = new Set();
 function renderQuestionCompareRow(q, testContext){
   const rowKey = (testContext ? 'cmp-tq-'+testContext.id+'-' : 'cmp-q-') + q.id;
   const open = expandedRows.has(rowKey);
   const cells = state.children.map(c=>({child:c, cell:getChildCellForQuestion(c.id, q, testContext)}));
   const anyCell = cells.some(x=>x.cell);
+  const isReal = !!state.qbank.find(x=>x.id===q.id); // false for a dangling in-test id whose question was since deleted
   const pillsHtml = cells.map(({child,cell})=>{
     const nameSpan = `<span style="color:${childColor(child.id)};">${esc(shortName(child.name))}</span>`;
     if(!cell) return `<span class="score-pill" style="opacity:0.45;background:transparent;border:1px solid var(--line);">${nameSpan}: —</span>`;
@@ -2161,17 +2016,31 @@ function renderQuestionCompareRow(q, testContext){
     const pct = cell.needsReview ? 50 : (cell.marks? cell.earned/cell.marks*100 : 0);
     return `<span class="score-pill ${cell.needsReview?'mid':scoreLabel(pct)}">${nameSpan}: ${label}</span>`;
   }).join(' ');
-  const row=el(`<div style="padding:9px 0;border-bottom:1px solid var(--line);${anyCell?'cursor:pointer;':'opacity:0.55;'}">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:150px;">
-        ${!testContext?`<span class="tag ${q.subject}">${q.subject}</span>`:''}${q.topic?`<span class="tag diff">${esc(q.topic)}</span>`:''}
-        <div style="font-size:0.85rem;margin-top:4px;">${esc((q.prompt||'(question no longer in bank)').slice(0,140))}${(q.prompt||'').length>140?'…':''}</div>
+  const showSelect = !testContext && isReal; // bulk-select only makes sense in the flat standalone list
+  const row=el(`<div style="padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:flex-start;">
+    ${showSelect?`<input type="checkbox" class="qrow-select" data-id="${q.id}" style="margin-top:12px;flex:0 0 auto;" ${selectedQIds.has(q.id)?'checked':''}>`:''}
+    <div style="flex:1;min-width:0;${anyCell?'cursor:pointer;':'opacity:0.6;'}" class="qrow-body">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:150px;">
+          ${!testContext?`<span class="tag ${q.subject}">${q.subject}</span>`:''}${q.topic?`<span class="tag diff">${esc(q.topic)}</span>`:''}${isReal?(()=>{
+            const pending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
+            return `<span class="qrow-edit" style="color:var(--maths);font-size:0.72rem;cursor:pointer;margin-left:6px;">edit</span><span class="qrow-del" style="color:var(--bad);font-size:0.72rem;cursor:pointer;margin-left:8px;font-weight:${pending?'700':'400'};">${pending?'confirm remove?':'delete'}</span>`;
+          })():''}
+          <div style="font-size:0.85rem;margin-top:4px;">${esc((q.prompt||'(question no longer in bank — remove it from this test)').slice(0,140))}${(q.prompt||'').length>140?'…':''}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;flex:0 0 auto;">${pillsHtml}</div>
       </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;flex:0 0 auto;">${pillsHtml}</div>
     </div>
   </div>`);
   const wrapper=el(`<div></div>`);
-  if(anyCell) row.addEventListener('click', ()=>{ if(expandedRows.has(rowKey)) expandedRows.delete(rowKey); else expandedRows.add(rowKey); render(); });
+  const body = row.querySelector('.qrow-body');
+  if(anyCell) body.addEventListener('click', (e)=>{ if(e.target.closest('.qrow-edit')||e.target.closest('.qrow-del')) return; if(expandedRows.has(rowKey)) expandedRows.delete(rowKey); else expandedRows.add(rowKey); render(); });
+  const editBtn = row.querySelector('.qrow-edit');
+  if(editBtn) editBtn.addEventListener('click', (e)=>{ e.stopPropagation(); startEditQuestion(q); });
+  const delBtn = row.querySelector('.qrow-del');
+  if(delBtn) delBtn.addEventListener('click', (e)=>{ e.stopPropagation(); deleteQuestion(q.id); });
+  const selectCb = row.querySelector('.qrow-select');
+  if(selectCb) selectCb.addEventListener('change', (e)=>{ e.stopPropagation(); if(e.target.checked) selectedQIds.add(q.id); else selectedQIds.delete(q.id); render(); });
   wrapper.appendChild(row);
   if(open && anyCell){
     const detail=el(`<div style="padding:2px 0 12px 8px;"></div>`);
@@ -2198,6 +2067,7 @@ function renderQuestionCompareRow(q, testContext){
 function renderTestCompareGroup(t){
   const key='cmp-test-'+t.id;
   const open = expandedRows.has(key);
+  const isPending = state.pendingDelete && state.pendingDelete.type==='test' && state.pendingDelete.id===t.id;
   const pillsHtml = state.children.map(c=>{
     const nameSpan = `<span style="color:${childColor(c.id)};">${esc(shortName(c.name))}</span>`;
     const r = latestAttempt(c.id,'test',t.id);
@@ -2205,7 +2075,8 @@ function renderTestCompareGroup(t){
     const pct = r.maxScore? r.score/r.maxScore*100 : 0;
     return `<span class="score-pill ${scoreLabel(pct)}">${nameSpan}: ${r.score}/${r.maxScore}</span>`;
   }).join(' ');
-  const head=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;cursor:pointer;margin-bottom:${open?'0':'10px'};">
+  const head=el(`<div class="card subj-${t.subject}" style="padding:12px 16px;cursor:pointer;margin-bottom:${open?'0':'10px'};position:relative;">
+    <span class="close-x test-del" style="${isPending?'color:var(--bad);font-weight:600;':''}">${isPending?'confirm remove?':'remove'}</span>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
       <div>
         <span style="display:inline-block;transition:transform .15s;transform:rotate(${open?'0':'-90'}deg);margin-right:4px;">▾</span>
@@ -2216,7 +2087,8 @@ function renderTestCompareGroup(t){
       <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">${pillsHtml}</div>
     </div>
   </div>`);
-  head.addEventListener('click', ()=>{ if(expandedRows.has(key)) expandedRows.delete(key); else expandedRows.add(key); render(); });
+  head.addEventListener('click', (e)=>{ if(e.target.closest('.test-del')) return; if(expandedRows.has(key)) expandedRows.delete(key); else expandedRows.add(key); render(); });
+  head.querySelector('.test-del').addEventListener('click', (e)=>{ e.stopPropagation(); deleteTest(t.id); });
   const wrapper=el(`<div></div>`);
   wrapper.appendChild(head);
   if(open){
@@ -2234,23 +2106,28 @@ function renderTestCompareGroup(t){
 function renderResults(){
   const app=document.getElementById('app');
   if(state.children.length===0){
-    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to see results.</div>`));
+    app.appendChild(el(`<div class="empty">Add a child in the Manage tab to see questions and results.</div>`));
     return;
   }
-  app.appendChild(el(`<h2 class="section-title">Results — compare</h2>`));
+  app.appendChild(el(`<h2 class="section-title">Questions</h2>`));
+  app.appendChild(el(`<div class="mini" style="margin:-10px 0 14px;">Everything about your question bank lives here — see how both kids did, add or edit questions, and build tests.</div>`));
   app.appendChild(renderSubjectFilter());
   app.appendChild(renderResultsTestFilter());
   app.appendChild(renderResultsDateFilter());
 
   const dateRange = computeResultsDateRange();
   const subjPasses = subj => state.subjectFilter==='All' || subj===state.subjectFilter;
+  const usedInTestIds = questionIdsUsedInTests();
 
   let tests = state.tests.filter(t=>subjPasses(t.subject) && inRange(t.createdAt,dateRange));
-  let questions = state.qbank.filter(q=>subjPasses(q.subject) && inRange(q.createdAt,dateRange));
+  // A question in a test lives under that test's group, not also in the flat
+  // list below — same "one home only" rule as Practice, just applied here too.
+  let questions = state.qbank.filter(q=>subjPasses(q.subject) && inRange(q.createdAt,dateRange) && !usedInTestIds.has(q.id));
   if(state.resultsTestFilter==='standalone'){ tests=[]; }
   else if(state.resultsTestFilter!=='all'){ tests=tests.filter(t=>t.id===state.resultsTestFilter); questions=[]; }
   tests.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
   questions.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  selectedQIds.forEach(id=>{ if(!questions.some(q=>q.id===id)) selectedQIds.delete(id); }); // drop stale selections when filters change
 
   // Needs review — merged across every child, since it's the same triage
   // queue regardless of whose answer is waiting on a judgement call.
@@ -2303,6 +2180,24 @@ function renderResults(){
     resultsKeys.push('results-standalone');
     app.appendChild(sectionHeader('results-standalone', `Standalone questions (${questions.length})`));
     if(!collapsedSections['results-standalone']){
+      if(selectedQIds.size){
+        const bar=el(`<div class="card" style="padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-left:5px solid var(--bad);">
+          <span class="mini">${selectedQIds.size} selected</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn secondary" id="qsel-clear">Clear</button>
+            <button class="btn danger" id="qsel-delete">Delete selected</button>
+          </div>
+        </div>`);
+        bar.querySelector('#qsel-clear').addEventListener('click', ()=>{ selectedQIds.clear(); render(); });
+        bar.querySelector('#qsel-delete').addEventListener('click', ()=>{
+          const n=selectedQIds.size;
+          if(!confirm(`Delete ${n} question${n===1?'':'s'}? This can't be undone.`)) return;
+          const ids=[...selectedQIds];
+          selectedQIds.clear();
+          (async()=>{ for(const id of ids){ await performDeleteQuestion(id); } })();
+        });
+        app.appendChild(bar);
+      }
       const card=el(`<div class="card" style="padding:2px 16px;"></div>`);
       questions.forEach(q=>card.appendChild(renderQuestionCompareRow(q, null)));
       if(card.lastChild) card.lastChild.style.borderBottom='none';
@@ -2311,6 +2206,56 @@ function renderResults(){
   }
   if(!tests.length && !questions.length){
     app.appendChild(el(`<div class="empty">Nothing matches these filters.</div>`));
+  }
+
+  // ---- Add / build tools — same forms and functions Manage used to host ----
+  resultsKeys.push('results-bulkq');
+  app.appendChild(sectionHeader('results-bulkq', 'Bulk add questions'));
+  if(!collapsedSections['results-bulkq']){
+    const bulkCard=el(`<div class="card">
+      <div class="mini" style="margin-bottom:8px;">Paste a block of questions (ask Claude for a batch in this format) and add them all in one go — no need to fill in the form for each one.</div>
+      <textarea id="bulk-text" style="min-height:140px;font-family:var(--font-mono);font-size:0.78rem;" placeholder='[{"subject":"Maths","difficulty":"Extension","type":"mcq","topic":"Indices","timeMinutes":2,"marks":1,"prompt":"...","options":["A","B","C","D"],"correctIndex":0,"solution":"..."}]'>${esc(state.bulkText)}</textarea>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
+        <button class="btn" id="bulk-import-btn">Import all</button>
+        ${state.bulkMsg?`<span class="mini" style="color:${state.bulkMsg.startsWith('Added')?'var(--good)':'var(--bad)'};">${esc(state.bulkMsg)}</span>`:''}
+      </div>
+    </div>`);
+    bulkCard.querySelector('#bulk-text').addEventListener('input', e=>{ state.bulkText=e.target.value; });
+    bulkCard.querySelector('#bulk-import-btn').addEventListener('click', bulkImport);
+    app.appendChild(bulkCard);
+  }
+
+  resultsKeys.push('results-addq');
+  app.appendChild(sectionHeader('results-addq', qForm.editId ? 'Edit question' : 'Add a single question to the bank'));
+  if(!collapsedSections['results-addq']){
+    const qf=el(renderQForm());
+    app.appendChild(qf);
+    const typeFieldsContainer=qf.querySelector('#qf-type-fields');
+    renderQTypeFields(typeFieldsContainer);
+    qf.querySelector('#qf-subject').addEventListener('change', e=>{ qForm.subject=e.target.value; });
+    qf.querySelector('#qf-difficulty').addEventListener('change', e=>{ qForm.difficulty=e.target.value; });
+    qf.querySelector('#qf-type').addEventListener('change', e=>{ qForm.type=e.target.value; renderQTypeFields(typeFieldsContainer); });
+    qf.querySelector('#qf-save').addEventListener('click', saveQuestion);
+    if(qf.querySelector('#qf-cancel')) qf.querySelector('#qf-cancel').addEventListener('click', cancelEditQuestion);
+  }
+
+  resultsKeys.push('results-buildtest');
+  app.appendChild(sectionHeader('results-buildtest', 'Build a timed test'));
+  if(!collapsedSections['results-buildtest']){
+    const tf=el(renderTestForm());
+    app.appendChild(tf);
+    tf.querySelector('#tf-title').addEventListener('input', e=>{ testForm.title=e.target.value; });
+    tf.querySelector('#tf-subject').addEventListener('change', e=>{ testForm.subject=e.target.value; testForm.questionIds=new Set(); testForm.timeLimitTouched=false; render(); });
+    tf.querySelector('#tf-time').addEventListener('input', e=>{ testForm.timeLimitTouched=true; testForm.timeLimitMins=+e.target.value||testForm.timeLimitMins; });
+    tf.querySelectorAll('.tf-check').forEach(cb=>{
+      cb.addEventListener('change', e=>{
+        const id=e.target.dataset.id;
+        if(e.target.checked) testForm.questionIds.add(id); else testForm.questionIds.delete(id);
+        if(!testForm.timeLimitTouched) testForm.timeLimitMins=Math.max(5, Math.ceil(sumMinutes(testForm.questionIds)));
+        render();
+      });
+    });
+    tf.querySelector('#tf-save').addEventListener('click', saveTest);
   }
 }
 function renderResultsBody(){ render(); }
@@ -2333,7 +2278,7 @@ function render(){
   if(backupBanner) app.appendChild(backupBanner);
 
   const nav=el(`<nav class="tabs"></nav>`);
-  [['practice','Practice'],['results','Results'],['reference','Reference'],['manage','Manage']].forEach(([id,label])=>{
+  [['practice','Practice'],['results','Questions'],['reference','Reference'],['manage','Manage']].forEach(([id,label])=>{
     const b=el(`<button class="${state.tab===id?'active':''}">${label}</button>`);
     b.addEventListener('click', ()=>setTab(id));
     nav.appendChild(b);
