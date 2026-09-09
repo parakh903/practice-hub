@@ -260,6 +260,7 @@ let state={
   resultsDatePreset:'all', // 'all'|'today'|'7d'|'30d'|'month'|'year'|'custom'
   resultsDateFrom:null,
   resultsDateTo:null,
+  topicBreakdownExpanded:false,
   refSearch:'',
   refBulkText:'',
   refBulkMsg:'',
@@ -267,7 +268,10 @@ let state={
   // Backup reminder settings — shared/family-wide like everything else in Firestore,
   // not per-device localStorage, since "have we backed up" and "how do we want to
   // be reminded" are facts about the family's data, not about any one phone.
-  backupSettings: {mode:'monthly', dayOfMonth:1, intervalDays:14, lastBackupDate:null, backupDismissedDate:null}
+  backupSettings: {mode:'monthly', dayOfMonth:1, intervalDays:14, lastBackupDate:null, backupDismissedDate:null},
+  // Inactivity nudges — shared/family-wide like backupSettings, so a dismissal
+  // on one device holds for the day regardless of which device checks next.
+  practiceReminders: {perChild:{}, combinedDismissedDate:null}
 };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -371,6 +375,12 @@ function initListeners(){
     markLoaded('backupSettings');
     render();
   }, err=>{ console.error('backupSettings listener error', err); markLoaded('backupSettings'); render(); });
+
+  db.collection('meta').doc('practiceReminders').onSnapshot(doc=>{
+    const defaults = {perChild:{}, combinedDismissedDate:null};
+    state.practiceReminders = doc.exists ? Object.assign({}, defaults, doc.data()) : defaults;
+    render();
+  }, err=>console.error('practiceReminders listener error', err));
 }
 
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; }
@@ -539,6 +549,79 @@ function renderBackupBanner(){
   });
   banner.querySelector('#backup-banner-dismiss').addEventListener('click', ()=>{
     saveBackupSettings({backupDismissedDate: todayISODate()});
+  });
+  return banner;
+}
+
+// ---------- PRACTICE INACTIVITY REMINDERS ----------
+const INACTIVITY_MS = 24*60*60*1000; // "more than one day" since last attempt
+function lastActivityMs(childId){
+  const results = state.results[childId]||[];
+  if(!results.length) return null;
+  return Math.max(...results.map(r=>r.date||0));
+}
+function daysSinceLastActivity(childId){
+  const last = lastActivityMs(childId);
+  return last ? Math.floor((Date.now()-last)/86400000) : null;
+}
+function isChildInactive(childId){
+  const last = lastActivityMs(childId);
+  if(last===null) return true; // never practiced at all
+  return (Date.now()-last) > INACTIVITY_MS;
+}
+function savePracticeReminders(patch){
+  return db.collection('meta').doc('practiceReminders').set(patch, {merge:true}).catch(err=>console.error('Failed to save practice reminders', err));
+}
+function inactivityLine(childId){
+  const days = daysSinceLastActivity(childId);
+  if(days===null) return `hasn't practiced yet`;
+  if(days===1) return `hasn't practiced in 1 day`;
+  return `hasn't practiced in ${days} days`;
+}
+
+// Shown regardless of which child (if any) is selected — a parent-facing
+// heads-up that at least one child has gone quiet, so it belongs at the root
+// level like the backup banner, not tucked inside a per-child tab.
+function renderInactivityBannerCombined(){
+  if(state.children.length<2) return null; // the personal banner alone covers a single-child setup
+  const inactive = state.children.filter(c=>isChildInactive(c.id));
+  if(!inactive.length) return null;
+  if(state.practiceReminders.combinedDismissedDate===todayISODate()) return null;
+  const lines = state.children.map(c=>{
+    const inact = isChildInactive(c.id);
+    return `<span style="color:${childColor(c.id)};font-weight:600;">${esc(c.name)}</span> ${inact? inactivityLine(c.id) : 'is up to date'}`;
+  }).join(' &middot; ');
+  const banner = el(`<div class="card" style="border-left:5px solid var(--science);background:var(--science-bg);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 18px;margin-bottom:20px;">
+    <div style="flex:1;min-width:220px;">
+      <div style="font-family:var(--font-mono);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--science);margin-bottom:4px;">👀 Practice check-in</div>
+      <div style="font-size:0.9rem;">${lines}</div>
+    </div>
+    <button class="btn secondary" id="inactivity-combined-dismiss">Not now</button>
+  </div>`);
+  banner.querySelector('#inactivity-combined-dismiss').addEventListener('click', ()=>{
+    savePracticeReminders({combinedDismissedDate: todayISODate()});
+  });
+  return banner;
+}
+
+// Shown to whichever child has just selected themselves — personal, so it
+// only fires on the Practice tab once a specific child is picked.
+function renderInactivityBannerPersonal(){
+  if(!state.currentChild) return null;
+  const c = state.children.find(x=>x.id===state.currentChild);
+  if(!c || !isChildInactive(c.id)) return null;
+  const dismissedDate = (state.practiceReminders.perChild||{})[c.id];
+  if(dismissedDate===todayISODate()) return null;
+  const banner = el(`<div class="card" style="border-left:5px solid ${childColor(c.id)};background:${childColorBg(c.id)};display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 18px;margin-bottom:20px;">
+    <div style="flex:1;min-width:220px;">
+      <div style="font-family:var(--font-mono);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em;color:${childColor(c.id)};margin-bottom:4px;">👋 Hey ${esc(c.name)}</div>
+      <div style="font-size:0.9rem;">You ${inactivityLine(c.id)} — ready to jump back in?</div>
+    </div>
+    <button class="btn secondary" id="inactivity-personal-dismiss">Not now</button>
+  </div>`);
+  banner.querySelector('#inactivity-personal-dismiss').addEventListener('click', ()=>{
+    const perChild = Object.assign({}, state.practiceReminders.perChild||{}, {[c.id]: todayISODate()});
+    savePracticeReminders({perChild});
   });
   return banner;
 }
@@ -1146,6 +1229,8 @@ function renderPractice(){
     return;
   }
   if(state.activeAttempt){ renderAttempt(app); return; }
+  const personalBanner = renderInactivityBannerPersonal();
+  if(personalBanner) app.appendChild(personalBanner);
 
   const myResults = state.results[state.currentChild] || [];
   function lastAttemptFor(type, refId){
@@ -1979,28 +2064,44 @@ function renderTopicBreakdown(tests, questions){
     });
     return {attempted, correct, wrong, review, earned, total, toDo, pct: total?Math.round(earned/total*100):null};
   }
-  // Subject first, then topics with the most outstanding "to do" work across
-  // both children float to the top — the areas most worth assigning next.
+  // Weakest first — but "weak" only means something once a child has actually
+  // tried a topic, and the two kids can be weak in different places. So the
+  // signal is the WORSE of the two children's scores on that topic (catches
+  // either child struggling), and topics nobody has attempted yet aren't
+  // "weak", they're just unstarted — those sort to the bottom instead.
+  function worstPct(subject, topic){
+    const pcts = state.children.map(c=>statsFor(c.id,subject,topic).pct).filter(p=>p!==null);
+    return pcts.length? Math.min(...pcts) : null;
+  }
+  topicList.forEach(t=>{ t._worst = worstPct(t.subject, t.topic); });
   topicList.sort((a,b)=>{
+    if((a._worst===null) !== (b._worst===null)) return a._worst===null ? 1 : -1;
+    if(a._worst!==null && a._worst!==b._worst) return a._worst-b._worst;
     if(a.subject!==b.subject) return a.subject.localeCompare(b.subject);
-    const aToDo=state.children.reduce((s,c)=>s+statsFor(c.id,a.subject,a.topic).toDo,0);
-    const bToDo=state.children.reduce((s,c)=>s+statsFor(c.id,b.subject,b.topic).toDo,0);
-    if(aToDo!==bToDo) return bToDo-aToDo;
     return a.topic.localeCompare(b.topic);
   });
 
   const wrap=el(`<div></div>`);
   if(!topicList.length){ wrap.appendChild(el(`<div class="empty">No topics in this filter yet.</div>`)); return wrap; }
-  topicList.forEach(({subject,topic})=>{
-    const row=el(`<div class="card subj-${subject}" style="padding:9px 14px;margin-bottom:6px;">
-      <span class="tag ${subject}">${subject}</span><span class="tag diff">${esc(topic)}</span>
-    </div>`);
+  const LIMIT=6;
+  const showAll = state.topicBreakdownExpanded;
+  const visible = showAll ? topicList : topicList.slice(0,LIMIT);
+  visible.forEach(({subject,topic})=>{
+    const row=el(`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 2px;border-bottom:1px solid var(--line);"></div>`);
+    row.appendChild(el(`<div style="flex:1;min-width:140px;"><span class="tag ${subject}">${subject}</span><span class="tag diff">${esc(topic)}</span></div>`));
+    const statsWrap=el(`<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:0.78rem;"></div>`);
     state.children.forEach(c=>{
       const s=statsFor(c.id, subject, topic);
-      row.appendChild(el(`<div class="mini" style="margin-top:4px;"><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted?`${s.pct}% (${s.earned}/${s.total})`:'—'}${s.toDo?` <span style="color:var(--mid-text);">&middot; ${s.toDo} to do</span>`:''}</div>`));
+      statsWrap.appendChild(el(`<span><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted?`${s.pct}% (${s.earned}/${s.total})`:'—'}${s.toDo?` <span style="color:var(--mid-text);">&middot; ${s.toDo} to do</span>`:''}</span>`));
     });
+    row.appendChild(statsWrap);
     wrap.appendChild(row);
   });
+  if(topicList.length>LIMIT){
+    const toggle=el(`<button class="btn secondary" style="margin-top:10px;">${showAll?'Show fewer':`Show all ${topicList.length} topics`}</button>`);
+    toggle.addEventListener('click', ()=>{ state.topicBreakdownExpanded=!state.topicBreakdownExpanded; render(); });
+    wrap.appendChild(toggle);
+  }
   return wrap;
 }
 // "To do" in the same per-question unit as tallyItems' attempted count — a
@@ -2249,7 +2350,7 @@ function renderResults(){
   resultsKeys.push('results-topics');
   app.appendChild(sectionHeader('results-topics', 'Topic breakdown'));
   if(!collapsedSections['results-topics']){
-    app.appendChild(el(`<div class="mini" style="margin:-4px 0 8px;">Sorted by subject, then by whichever topics have the most left to do — the areas most worth assigning next.</div>`));
+    app.appendChild(el(`<div class="mini" style="margin:-4px 0 8px;">Sorted weakest first — whichever child is struggling more on a topic decides its place. Topics nobody's tried yet sit at the bottom.</div>`));
     app.appendChild(renderTopicBreakdown(tests, questions));
   }
 
@@ -2360,6 +2461,8 @@ function render(){
 
   const backupBanner = renderBackupBanner();
   if(backupBanner) app.appendChild(backupBanner);
+  const inactivityBanner = renderInactivityBannerCombined();
+  if(inactivityBanner) app.appendChild(inactivityBanner);
 
   const nav=el(`<nav class="tabs"></nav>`);
   [['practice','Practice'],['results','Questions'],['reference','Reference'],['manage','Manage']].forEach(([id,label])=>{
