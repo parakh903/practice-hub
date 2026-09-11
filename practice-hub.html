@@ -2200,7 +2200,7 @@ function renderQuestionCompareRow(q, testContext){
     <div style="flex:1;min-width:0;${anyCell?'cursor:pointer;':'opacity:0.6;'}" class="qrow-body">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
         <div style="flex:1;min-width:150px;">
-          ${!testContext?`<span class="tag ${q.subject}">${q.subject}</span>`:''}${q.topic?`<span class="tag diff">${esc(q.topic)}</span>`:''}${isReal?(()=>{
+          ${!testContext?`<span class="tag ${q.subject}">${q.subject}</span>`:''}${q.topic?`<span class="tag diff">${esc(q.topic)}</span>`:''}${isReal?`<span class="tag diff">posted ${formatDate(q.createdAt)}</span>`:''}${isReal?(()=>{
             const pending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
             return `<span class="qrow-edit" style="color:var(--maths);font-size:0.72rem;cursor:pointer;margin-left:6px;">edit</span><span class="qrow-del" style="color:var(--bad);font-size:0.72rem;cursor:pointer;margin-left:8px;font-weight:${pending?'700':'400'};">${pending?'confirm remove?':'delete'}</span>`;
           })():''}
