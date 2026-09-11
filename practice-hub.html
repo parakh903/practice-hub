@@ -2138,9 +2138,10 @@ function renderChildSummaryCards(tests, questions){
 function renderSubjectCompareRow(dateRange){
   const row=el(`<div class="row" style="margin-bottom:16px;flex-wrap:wrap;"></div>`);
   row.style.display='flex'; row.style.gap='10px';
+  const usedInTestIds = questionIdsUsedInTests();
   SUBJECTS.forEach(subj=>{
     let tests = state.tests.filter(t=>t.subject===subj && inRange(t.createdAt,dateRange));
-    let qs = state.qbank.filter(q=>q.subject===subj && inRange(q.createdAt,dateRange));
+    let qs = state.qbank.filter(q=>q.subject===subj && inRange(q.createdAt,dateRange) && !usedInTestIds.has(q.id));
     if(state.resultsTestFilter==='standalone') tests=[];
     else if(state.resultsTestFilter!=='all'){ tests=tests.filter(t=>t.id===state.resultsTestFilter); qs=[]; }
     const box=el(`<div class="card subj-${subj}" style="padding:10px 12px;flex:1;min-width:170px;"><span class="tag ${subj}">${subj}</span></div>`);
