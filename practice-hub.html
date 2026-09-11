@@ -2143,11 +2143,17 @@ function renderSubjectCompareRow(dateRange){
     let qs = state.qbank.filter(q=>q.subject===subj && inRange(q.createdAt,dateRange));
     if(state.resultsTestFilter==='standalone') tests=[];
     else if(state.resultsTestFilter!=='all'){ tests=tests.filter(t=>t.id===state.resultsTestFilter); qs=[]; }
-    const box=el(`<div class="card subj-${subj}" style="padding:10px 12px;flex:1;min-width:150px;"><span class="tag ${subj}">${subj}</span></div>`);
+    const box=el(`<div class="card subj-${subj}" style="padding:10px 12px;flex:1;min-width:170px;"><span class="tag ${subj}">${subj}</span></div>`);
     state.children.forEach(c=>{
       const s = tallyItems(decomposeChildAttempts(c.id, tests, qs));
       const toDo = toDoCount(c.id, tests, qs);
-      box.appendChild(el(`<div class="mini" style="margin-top:5px;"><span style="color:${childColor(c.id)};font-weight:600;">${esc(shortName(c.name))}</span>: ${s.attempted? `${s.pct}% (${s.earned}/${s.total})` : '—'}${toDo?` <span style="color:var(--mid-text);">· ${toDo} to do</span>`:''}</div>`));
+      box.appendChild(el(`<div style="margin-top:8px;">
+        <div style="color:${childColor(c.id)};font-weight:600;font-size:0.85rem;">${esc(shortName(c.name))}</div>
+        ${s.attempted ? `
+          <div class="mini" style="margin-top:1px;">${s.pct}% &middot; ${s.earned}/${s.total} marks</div>
+          <div class="mini" style="margin-top:1px;">${s.attempted} done &middot; ${s.correct}✓ ${s.wrong}✗${s.review?` &middot; ${s.review} review`:''}${toDo?` &middot; <span style="color:var(--mid-text);">${toDo} to do</span>`:''}</div>
+        ` : `<div class="mini" style="margin-top:1px;">Nothing done yet${toDo?` &middot; <span style="color:var(--mid-text);">${toDo} to do</span>`:''}</div>`}
+      </div>`));
     });
     row.appendChild(box);
   });
