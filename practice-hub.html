@@ -1264,7 +1264,7 @@ function renderPractice(){
     const card=el(`<div class="card subj-${q.subject}" style="position:relative;${done?'opacity:0.75;':''}">
       ${doneBadge}
       <span class="tag ${q.subject}">${q.subject}</span><span class="tag diff">${q.difficulty}</span><span class="tag diff">~${q.timeMinutes||2} min · ${q.marks||1} mk${timeNote}</span><span class="tag diff">posted ${formatDate(q.createdAt)}</span>
-      <div style="margin:6px 0 12px;font-size:0.92rem;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt.slice(0,100))}${q.prompt.length>100?'…':''}</div>
+      <div style="margin:6px 0 12px;font-size:0.92rem;white-space:pre-wrap;">${esc(q.topic)||'(no topic)'} — ${esc(q.prompt)}</div>
       <button class="btn secondary">${done?'Answer again':'Answer this'}</button>
     </div>`);
     card.querySelector('button').addEventListener('click', ()=>startQuestion(q));
@@ -2211,7 +2211,7 @@ function renderQuestionCompareRow(q, testContext){
             const pending = state.pendingDelete && state.pendingDelete.type==='question' && state.pendingDelete.id===q.id;
             return `<span class="qrow-edit" style="color:var(--maths);font-size:0.72rem;cursor:pointer;margin-left:6px;">edit</span><span class="qrow-del" style="color:var(--bad);font-size:0.72rem;cursor:pointer;margin-left:8px;font-weight:${pending?'700':'400'};">${pending?'confirm remove?':'delete'}</span>`;
           })():''}
-          <div style="font-size:0.85rem;margin-top:4px;">${esc((q.prompt||'(question no longer in bank — remove it from this test)').slice(0,140))}${(q.prompt||'').length>140?'…':''}</div>
+          <div style="font-size:0.85rem;margin-top:4px;white-space:pre-wrap;">${esc(q.prompt||'(question no longer in bank — remove it from this test)')}</div>
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap;flex:0 0 auto;">${pillsHtml}</div>
       </div>
